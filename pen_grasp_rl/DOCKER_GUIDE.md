@@ -90,17 +90,15 @@ docker login nvcr.io
 # 1. Isaac Lab 공식 레포 클론
 cd ~
 git clone https://github.com/isaac-sim/IsaacLab.git
-cd IsaacLab
 
-# 2. 팀 프로젝트 클론 (pen_grasp_rl 포함)
-git clone https://github.com/KERNEL3-2/COBOT_WRITER.git temp_cobot
-mv temp_cobot/pen_grasp_rl ./
-rm -rf temp_cobot
+# 2. 팀 프로젝트 클론 (pen_grasp_rl + 로봇 USD 파일 포함)
+git clone https://github.com/KERNEL3-2/COBOT_WRITER.git
 
-# 3. 로봇 USD 파일 받기 (팀장/관리자에게 요청)
-# first_control.usd 파일을 적절한 위치에 복사
-# 경로: pen_grasp_rl/envs/pen_grasp_env.py 에서 확인
+# 3. pen_grasp_rl을 IsaacLab 안으로 복사
+cp -r ~/COBOT_WRITER/pen_grasp_rl ~/IsaacLab/
 ```
+
+> **참고**: 로봇 USD 파일(`first_control.usd`)은 `pen_grasp_rl/models/`에 포함되어 있습니다.
 
 ### 3.2 Docker 설정 파일 수정
 ```bash
@@ -291,9 +289,8 @@ docker logout nvcr.io
 - [ ] NGC 로그인 (`docker login nvcr.io`)
 - [ ] Isaac Lab 클론 (`git clone https://github.com/isaac-sim/IsaacLab.git`)
 - [ ] 팀 프로젝트 클론 (`git clone https://github.com/KERNEL3-2/COBOT_WRITER.git`)
-- [ ] pen_grasp_rl 폴더를 IsaacLab 안으로 이동
-- [ ] 로봇 USD 파일 복사 (팀장에게 요청)
-- [ ] docker-compose.yaml에 pen_grasp_rl 볼륨 마운트 추가
+- [ ] pen_grasp_rl 폴더를 IsaacLab 안으로 복사
+- [ ] docker-compose.yaml에 볼륨 마운트 추가 (pen_grasp_rl, logs)
 - [ ] `docker compose --profile base build`
 - [ ] `./pen_grasp_rl/docker_setup.sh` (컨테이너 내부)
 
