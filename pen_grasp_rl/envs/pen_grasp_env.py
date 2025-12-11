@@ -321,6 +321,30 @@ def action_rate_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
     return -torch.sum(torch.square(env.action_manager.action), dim=-1) * 0.001
 
 
+def floor_collision_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Penalty for robot links contacting the floor.
+
+    Uses contact forces to detect actual floor collision.
+    Checks link_2~6 and gripper (indices 2-10).
+    """
+    robot: Articulation = env.scene["robot"]
+
+    # Get contact forces on movable links (indices 2-10)
+    # [2-6] link_2~6, [7-10] gripper fingers
+    # net_contact_forces_w: (num_envs, num_bodies, 3)
+    contact_forces_z = robot.data.net_contact_forces_w[:, 2:11, 2]  # (num_envs, 9)
+
+    # Floor contact produces upward force (positive z)
+    # Also check if link is low (z < 0.1m) to filter out other contacts
+    link_z = robot.data.body_pos_w[:, 2:11, 2]  # (num_envs, 9)
+
+    # Floor collision: has upward contact force AND link is low
+    floor_contact = ((contact_forces_z > 1.0) & (link_z < 0.1)).any(dim=-1).float()
+
+    # Return negative penalty when floor collision detected
+    return -floor_contact
+
+
 def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Reward for aligning gripper z-axis with pen z-axis.
 
@@ -414,6 +438,7 @@ class RewardsCfg:
     """Reward specifications for the MDP."""
     distance_to_cap = RewTerm(func=distance_ee_cap_reward, weight=1.0)  # Reward for approaching cap (point b)
     z_axis_alignment = RewTerm(func=z_axis_alignment_reward, weight=0.5)  # Reward for aligning gripper z-axis with pen
+    floor_collision = RewTerm(func=floor_collision_penalty, weight=1.0)  # Penalty for links touching floor
     action_rate = RewTerm(func=action_rate_penalty, weight=0.1)
 
 
@@ -444,9 +469,9 @@ class EventsCfg:
                 "x": (-0.2, 0.2),      # 0.3~0.7m from base (base pos + 0.5 ± 0.2)
                 "y": (-0.3, 0.3),      # ±30cm left/right
                 "z": (-0.2, 0.2),      # 0.1~0.5m height (base z=0.3 ± 0.2)
-                "roll": (-0.5, 0.5),   # Random tilt ~±30 degrees
-                "pitch": (-0.5, 0.5),  # Random tilt ~±30 degrees
-                "yaw": (-3.14, 3.14),  # Full rotation around z
+                "roll": (-3.14, 3.14),   # Full rotation - pen can be upside down
+                "pitch": (-3.14, 3.14),  # Full rotation - cap can point any direction
+                "yaw": (-3.14, 3.14),    # Full rotation around z
             },
             "velocity_range": {},
             "asset_cfg": SceneEntityCfg("pen"),

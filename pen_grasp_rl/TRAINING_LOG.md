@@ -224,3 +224,44 @@ def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
 - **Phase 1 (현재)**: 펜 kinematic, 위치+정렬 학습
 - **Phase 2 (추후)**: 펜 dynamic, 잡기 동작 학습
 - 기존 학습된 "접근+정렬" 정책이 Phase 2에서 fine-tuning으로 활용됨
+
+---
+
+### 2025-12-11 추가 개선 사항
+
+#### 1. 로봇 USD에서 불필요한 펜 제거
+- `first_control.usd` 내부에 펜 오브젝트가 포함되어 있었음
+- Isaac Sim에서 USD 열어서 Robot/Pen 삭제 후 저장
+- 이전 학습에서 이 펜이 물리적 노이즈로 작용했을 가능성 있음
+
+#### 2. 펜 자세 랜덤화 범위 확대
+```python
+# 이전: 거의 수직으로만 스폰
+"roll": (-0.5, 0.5),   # ±30°
+"pitch": (-0.5, 0.5),  # ±30°
+
+# 변경: 완전 랜덤 (뒤집힘 포함)
+"roll": (-3.14, 3.14),   # ±180°
+"pitch": (-3.14, 3.14),  # ±180°
+```
+
+#### 3. 바닥 충돌 페널티 추가 (실제 접촉력 기반)
+```python
+def floor_collision_penalty(env) -> torch.Tensor:
+    """로봇 링크가 바닥에 닿으면 페널티."""
+    # 접촉력 z성분 확인 (바닥이 위로 밀어올림)
+    contact_forces_z = robot.data.net_contact_forces_w[:, 2:11, 2]
+    link_z = robot.data.body_pos_w[:, 2:11, 2]
+
+    # 바닥 충돌: 위쪽 접촉력 > 1N AND 링크 z < 0.1m
+    floor_contact = ((contact_forces_z > 1.0) & (link_z < 0.1)).any(dim=-1)
+    return -floor_contact.float()
+```
+
+#### 4. 현재 보상함수 구성
+| 보상함수 | weight | 설명 |
+|---------|--------|------|
+| `distance_to_cap` | 1.0 | grasp point → 펜 캡 거리 |
+| `z_axis_alignment` | 0.5 | z축 정렬 (5cm 이내 + dot>0.9) |
+| `floor_collision` | 1.0 | 바닥 실제 충돌 시 -1 페널티 |
+| `action_rate` | 0.1 | 액션 크기 페널티 |
