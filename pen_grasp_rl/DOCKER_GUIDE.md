@@ -120,30 +120,29 @@ cd ~/IsaacLab/docker
 
 > **참고**: logs를 bind mount하면 학습 결과를 호스트에서 바로 확인/복사할 수 있습니다.
 
-### 3.3 Docker 이미지 빌드
+### 3.3 Docker 이미지 빌드 및 실행
 ```bash
-cd ~/IsaacLab/docker
+cd ~/IsaacLab
 
 # 필수 파일 생성
-touch .isaac-lab-docker-history
+touch docker/.isaac-lab-docker-history
 
-# 이미지 빌드 (최초 1회, 약 30분 소요)
-docker compose --profile base build
+# 이미지 빌드 + 컨테이너 시작 (최초 1회, 약 30분 소요)
+./docker/container.py start
 ```
+
+> **참고**: `docker compose` 명령어를 직접 사용하면 환경변수 오류가 발생할 수 있습니다. 반드시 `container.py` 스크립트를 사용하세요.
 
 ---
 
 ## 4. 학습 실행
 
-### 4.1 컨테이너 시작
+### 4.1 컨테이너 진입
 ```bash
-cd ~/IsaacLab/docker
-
-# 컨테이너 시작 (백그라운드)
-docker compose --profile base up -d
+cd ~/IsaacLab
 
 # 컨테이너 진입
-docker compose --profile base exec isaac-lab-base bash
+./docker/container.py enter base
 ```
 
 ### 4.2 의존성 설치 (컨테이너 내부, 최초 1회)
@@ -166,8 +165,8 @@ python pen_grasp_rl/scripts/train.py --headless --num_envs 4096 --max_iterations
 exit
 
 # 컨테이너 중지
-cd ~/IsaacLab/docker
-docker compose --profile base down
+cd ~/IsaacLab
+./docker/container.py stop
 ```
 
 ---
@@ -176,9 +175,9 @@ docker compose --profile base down
 
 ### 매일 작업 시작할 때
 ```bash
-cd ~/IsaacLab/docker
-docker compose --profile base up -d
-docker compose --profile base exec isaac-lab-base bash
+cd ~/IsaacLab
+./docker/container.py start        # 컨테이너 시작
+./docker/container.py enter base   # 컨테이너 진입
 
 # 컨테이너 내부
 cd /workspace/isaaclab
@@ -188,7 +187,7 @@ python pen_grasp_rl/scripts/train.py --headless --num_envs 4096
 ### 작업 끝날 때
 ```bash
 exit  # 컨테이너에서 나가기
-docker compose --profile base down  # 컨테이너 중지
+./docker/container.py stop  # 컨테이너 중지
 ```
 
 ---
@@ -291,7 +290,7 @@ docker logout nvcr.io
 - [ ] 팀 프로젝트 클론 (`git clone https://github.com/KERNEL3-2/COBOT_WRITER.git`)
 - [ ] pen_grasp_rl 폴더를 IsaacLab 안으로 복사
 - [ ] docker-compose.yaml에 볼륨 마운트 추가 (pen_grasp_rl, logs)
-- [ ] `docker compose --profile base build`
+- [ ] `./docker/container.py start` (빌드 + 실행)
 - [ ] `./pen_grasp_rl/docker_setup.sh` (컨테이너 내부)
 
 설정 완료 후에는 4번(학습 실행) 섹션부터 따라하면 됩니다.
