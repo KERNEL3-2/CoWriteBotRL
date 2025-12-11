@@ -204,7 +204,32 @@ exit  # 컨테이너에서 나가기
 
 ---
 
-## 6. 코드 수정
+## 6. 코드 업데이트 (git pull)
+
+GitHub에서 최신 코드를 받으려면 **호스트(Docker 밖)**에서 실행:
+
+```bash
+# 1. COBOT_WRITER 폴더에서 git pull
+cd ~/COBOT_WRITER
+git pull
+
+# 2. __pycache__ 삭제 (권한 문제 방지)
+sudo rm -rf ~/IsaacLab/pen_grasp_rl/envs/__pycache__
+sudo rm -rf ~/IsaacLab/pen_grasp_rl/scripts/__pycache__
+
+# 3. 업데이트된 파일 복사
+cp -r ~/COBOT_WRITER/pen_grasp_rl ~/IsaacLab/
+cp -r ~/COBOT_WRITER/e0509_gripper_isaac ~/
+
+# 4. 확인
+ls -la ~/IsaacLab/pen_grasp_rl/models/first_control.usd
+```
+
+> **참고**: Docker 컨테이너는 볼륨 마운트로 `~/IsaacLab/pen_grasp_rl`을 참조하므로, 호스트에서 복사하면 컨테이너에 자동 반영됩니다.
+
+---
+
+## 7. 코드 직접 수정
 
 코드는 **호스트(노트북)에서 수정**하면 됩니다.
 볼륨 마운트 되어 있어서 컨테이너 안에 바로 반영됩니다.
@@ -223,7 +248,7 @@ code ~/IsaacLab/pen_grasp_rl/
 
 ---
 
-## 7. TensorBoard로 학습 모니터링
+## 8. TensorBoard로 학습 모니터링
 
 ### 방법 1: 컨테이너 안에서 실행 (권장)
 ```bash
@@ -248,7 +273,7 @@ tensorboard --logdir=~/IsaacLab/logs/pen_grasp
 
 ---
 
-## 8. 문제 해결
+## 9. 문제 해결
 
 ### GPU 인식 안 될 때
 ```bash
@@ -278,7 +303,7 @@ docker compose --profile base logs
 
 ---
 
-## 9. NGC 계정 관리
+## 10. NGC 계정 관리
 
 ### 다른 PC에서 사용
 - 동일한 API Key를 여러 PC에서 사용 가능
@@ -298,7 +323,7 @@ docker logout nvcr.io
 
 ---
 
-## 10. 요약: 새 PC 설정 체크리스트
+## 11. 요약: 새 PC 설정 체크리스트
 
 - [ ] NVIDIA 드라이버 설치
 - [ ] Docker 설치
