@@ -322,27 +322,22 @@ def action_rate_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
 
 
 def floor_collision_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Penalty for robot links contacting the floor.
+    """Penalty for robot links getting too close to the floor.
 
-    Uses contact forces to detect actual floor collision.
-    Checks link_2~6 and gripper (indices 2-10).
+    Checks link_2~6 and gripper (indices 2-10) for z < 0.05m.
     """
     robot: Articulation = env.scene["robot"]
 
-    # Get contact forces on movable links (indices 2-10)
+    # Get z positions of movable links (indices 2-10)
     # [2-6] link_2~6, [7-10] gripper fingers
-    # net_contact_forces_w: (num_envs, num_bodies, 3)
-    contact_forces_z = robot.data.net_contact_forces_w[:, 2:11, 2]  # (num_envs, 9)
-
-    # Floor contact produces upward force (positive z)
-    # Also check if link is low (z < 0.1m) to filter out other contacts
     link_z = robot.data.body_pos_w[:, 2:11, 2]  # (num_envs, 9)
 
-    # Floor collision: has upward contact force AND link is low
-    floor_contact = ((contact_forces_z > 1.0) & (link_z < 0.1)).any(dim=-1).float()
+    # Check if any link is below threshold (5cm)
+    floor_threshold = 0.05
+    below_floor = (link_z < floor_threshold).any(dim=-1).float()
 
-    # Return negative penalty when floor collision detected
-    return -floor_contact
+    # Return negative penalty when any link is too low
+    return -below_floor
 
 
 def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
