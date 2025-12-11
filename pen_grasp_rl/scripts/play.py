@@ -24,9 +24,9 @@ import torch
 import torch.nn as nn
 from envs.pen_grasp_env import PenGraspEnv, PenGraspEnvCfg, PEN_LENGTH
 
-# Debug visualization (disabled for now due to API issues)
-# from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-# from isaaclab.markers.config import SPHERE_MARKER_CFG
+# Visual markers for tip and cap
+import isaaclab.sim as sim_utils
+from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 
 
 class SimplePolicy(nn.Module):
@@ -75,6 +75,22 @@ def main():
     env_cfg = PenGraspEnvCfg()
     env_cfg.scene.num_envs = args.num_envs
     env = PenGraspEnv(cfg=env_cfg)
+
+    # Create visual markers for pen tip (blue) and cap (red)
+    marker_cfg = VisualizationMarkersCfg(
+        prim_path="/World/Visuals/PenMarkers",
+        markers={
+            "tip": sim_utils.SphereCfg(
+                radius=0.008,
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),  # Blue
+            ),
+            "cap": sim_utils.SphereCfg(
+                radius=0.008,
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),  # Red
+            ),
+        }
+    )
+    pen_markers = VisualizationMarkers(marker_cfg)
 
     # Get observation and action dimensions
     obs_dim = env.observation_manager.group_obs_dim["policy"][0]
@@ -134,6 +150,27 @@ def main():
             obs, rewards, dones, truncated, info = env.step(actions)
             policy_obs = obs["policy"]
             step_count += 1
+
+            # Update pen markers (tip=blue, cap=red)
+            pen_pos = env.scene["pen"].data.root_pos_w  # (num_envs, 3)
+            pen_quat = env.scene["pen"].data.root_quat_w  # (num_envs, 4) - (w,x,y,z)
+
+            # Calculate tip and cap positions
+            half_len = PEN_LENGTH / 2.0
+            pen_axis = torch.tensor([[0.0, 0.0, 1.0]], device=pen_pos.device).expand(pen_pos.shape[0], -1)
+            pen_axis_world = quat_rotate_vector(pen_quat, pen_axis)
+
+            tip_pos = pen_pos + pen_axis_world * half_len   # Tip (blue) - writing end
+            cap_pos = pen_pos - pen_axis_world * half_len   # Cap (red) - grasp target
+
+            # Combine tip and cap positions: [tip_0, cap_0, tip_1, cap_1, ...]
+            num_envs = pen_pos.shape[0]
+            all_positions = torch.zeros((num_envs * 2, 3), device=pen_pos.device)
+            all_positions[0::2] = tip_pos  # Even indices: tip (blue, marker_index=0)
+            all_positions[1::2] = cap_pos  # Odd indices: cap (red, marker_index=1)
+
+            marker_indices = [0, 1] * num_envs  # 0=tip(blue), 1=cap(red)
+            pen_markers.visualize(translations=all_positions, marker_indices=marker_indices)
 
             # Print mean reward occasionally
             if step_count % 100 == 0:
