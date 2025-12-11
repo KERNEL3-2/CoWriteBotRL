@@ -364,8 +364,8 @@ def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     pen_z_z = 1.0 - 2.0 * (qx * qx + qy * qy)
     pen_z_axis = torch.stack([pen_z_x, pen_z_y, pen_z_z], dim=-1)
 
-    # Cap position (pen center - half_length * z_axis)
-    cap_pos = pen_pos - (PEN_LENGTH / 2) * pen_z_axis
+    # Cap position (pen center + half_length * z_axis)
+    cap_pos = pen_pos + (PEN_LENGTH / 2) * pen_z_axis
 
     # Get grasp point and distance to cap
     grasp_pos = get_grasp_point(robot)
