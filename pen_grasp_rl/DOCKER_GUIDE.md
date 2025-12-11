@@ -135,8 +135,9 @@ cd ~/IsaacLab/docker
 ```bash
 cd ~/IsaacLab
 
-# 필수 파일 생성
+# 필수 파일/폴더 생성
 touch docker/.isaac-lab-docker-history
+mkdir -p logs  # 볼륨 마운트용 logs 폴더 생성
 
 # 이미지 빌드 + 컨테이너 시작 (최초 1회, 약 30분 소요)
 ./docker/container.py start
@@ -224,7 +225,18 @@ code ~/IsaacLab/pen_grasp_rl/
 
 ## 7. TensorBoard로 학습 모니터링
 
-### 방법 1: 호스트에서 실행
+### 방법 1: 컨테이너 안에서 실행 (권장)
+```bash
+# 새 터미널에서 컨테이너 진입
+cd ~/IsaacLab
+./docker/container.py enter base
+
+# 컨테이너 내부에서
+tensorboard --logdir=/workspace/isaaclab/logs/pen_grasp --bind_all
+# 브라우저: http://localhost:6006
+```
+
+### 방법 2: 호스트에서 실행
 ```bash
 # 호스트 터미널에서
 pip install tensorboard
@@ -232,12 +244,7 @@ tensorboard --logdir=~/IsaacLab/logs/pen_grasp
 # 브라우저: http://localhost:6006
 ```
 
-### 방법 2: 컨테이너 안에서 실행
-```bash
-# 컨테이너 내부에서
-tensorboard --logdir=/workspace/isaaclab/logs/pen_grasp --bind_all
-# 브라우저: http://localhost:6006
-```
+> **주의**: 호스트에서 실행하려면 logs 폴더가 볼륨 마운트되어 있어야 합니다. 로그가 안 보이면 방법 1을 사용하세요.
 
 ---
 
