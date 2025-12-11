@@ -24,9 +24,9 @@ import torch
 import torch.nn as nn
 from envs.pen_grasp_env import PenGraspEnv, PenGraspEnvCfg, PEN_LENGTH
 
-# Debug visualization
-from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-from isaaclab.markers.config import SPHERE_MARKER_CFG
+# Debug visualization (disabled for now due to API issues)
+# from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+# from isaaclab.markers.config import SPHERE_MARKER_CFG
 
 
 class SimplePolicy(nn.Module):
@@ -76,30 +76,6 @@ def main():
     env_cfg.scene.num_envs = args.num_envs
     env = PenGraspEnv(cfg=env_cfg)
 
-    # Setup debug markers for pen tip (green) and cap (red)
-    tip_marker_cfg = VisualizationMarkersCfg(
-        prim_path="/Visuals/tip_markers",
-        markers={
-            "sphere": SPHERE_MARKER_CFG.replace(
-                visual_material={"diffuse_color": (0.0, 1.0, 0.0)},  # Green
-            ).replace(
-                scale=(0.015, 0.015, 0.015),  # 15mm diameter
-            ),
-        },
-    )
-    cap_marker_cfg = VisualizationMarkersCfg(
-        prim_path="/Visuals/cap_markers",
-        markers={
-            "sphere": SPHERE_MARKER_CFG.replace(
-                visual_material={"diffuse_color": (1.0, 0.0, 0.0)},  # Red
-            ).replace(
-                scale=(0.015, 0.015, 0.015),  # 15mm diameter
-            ),
-        },
-    )
-    tip_markers = VisualizationMarkers(tip_marker_cfg)
-    cap_markers = VisualizationMarkers(cap_marker_cfg)
-
     # Get observation and action dimensions
     obs_dim = env.observation_manager.group_obs_dim["policy"][0]
     act_dim = env.action_manager.total_action_dim
@@ -140,10 +116,6 @@ def main():
     print(f"  Act dim: {act_dim}")
     print(f"  Num envs: {args.num_envs}")
     print("=" * 50)
-    print("Pen markers:")
-    print("  - GREEN sphere: tip (a) - writing end")
-    print("  - RED sphere: cap (b) - gripper target")
-    print("=" * 50)
     print("Press Ctrl+C to exit")
 
     # Run test loop
@@ -151,8 +123,6 @@ def main():
     policy_obs = obs["policy"]
 
     step_count = 0
-    device = env.device
-    half_len = PEN_LENGTH / 2.0
 
     try:
         while simulation_app.is_running():
@@ -164,22 +134,6 @@ def main():
             obs, rewards, dones, truncated, info = env.step(actions)
             policy_obs = obs["policy"]
             step_count += 1
-
-            # Update pen tip/cap markers
-            pen_pos = env.scene["pen"].data.root_pos_w  # (N, 3)
-            pen_quat = env.scene["pen"].data.root_quat_w  # (N, 4) w,x,y,z
-
-            # Pen local z-axis offset
-            local_tip_offset = torch.tensor([[0.0, 0.0, half_len]], device=device).expand(pen_pos.shape[0], -1)
-            local_cap_offset = torch.tensor([[0.0, 0.0, -half_len]], device=device).expand(pen_pos.shape[0], -1)
-
-            # Rotate offsets by pen orientation
-            tip_pos = pen_pos + quat_rotate_vector(pen_quat, local_tip_offset)
-            cap_pos = pen_pos + quat_rotate_vector(pen_quat, local_cap_offset)
-
-            # Visualize markers
-            tip_markers.visualize(tip_pos)
-            cap_markers.visualize(cap_pos)
 
             # Print mean reward occasionally
             if step_count % 100 == 0:

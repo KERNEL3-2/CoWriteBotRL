@@ -110,7 +110,7 @@ class PenGraspSceneCfg(InteractiveSceneCfg):
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.1, 0.3)),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.4, 0.0, 0.3),  # In front of robot, floating at z=0.3m
+            pos=(0.5, 0.0, 0.3),  # Center of workspace (x:0.3~0.7, y:±0.3, z:0.1~0.5)
         ),
     )
 
@@ -367,9 +367,9 @@ class EventsCfg:
         mode="reset",
         params={
             "pose_range": {
-                "x": (-0.05, 0.05),
-                "y": (-0.05, 0.05),
-                "z": (0.0, 0.0),  # Keep at z=0.3 (set in init_state)
+                "x": (-0.2, 0.2),      # 0.3~0.7m from base (base pos + 0.5 ± 0.2)
+                "y": (-0.3, 0.3),      # ±30cm left/right
+                "z": (-0.2, 0.2),      # 0.1~0.5m height (base z=0.3 ± 0.2)
                 "roll": (-0.5, 0.5),   # Random tilt ~±30 degrees
                 "pitch": (-0.5, 0.5),  # Random tilt ~±30 degrees
                 "yaw": (-3.14, 3.14),  # Full rotation around z
