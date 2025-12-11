@@ -112,6 +112,43 @@ yaw = torch.rand(num_resets, device=self.device) * 6.28 - 3.14  # 360° 랜덤
 ```
 
 #### 다음 단계
-- [ ] 수정된 환경 테스트 (`play.py`)
-- [ ] 새 환경으로 학습 (10000 iteration, resume 기능 사용)
-- [ ] Docker 환경 구축
+- [x] 수정된 환경 테스트 (`play.py`)
+- [x] Docker 환경 구축
+- [ ] 새 환경으로 학습 (10000 iteration) - 진행 중
+
+---
+
+### 2025-12-11 Docker 환경 구축 및 새 노트북 학습
+
+#### Docker 환경 구축
+- Isaac Lab 공식 Docker 사용 (`nvcr.io/nvidia/isaac-sim`)
+- `container.py` 스크립트로 관리 (docker compose 직접 사용 시 환경변수 오류)
+- 볼륨 마운트: pen_grasp_rl, logs, e0509_gripper_isaac
+
+#### USD 파일 참조 문제 해결
+- `first_control.usd`가 `/workspace/e0509_gripper_isaac/e0509_gripper_isaac.usd` 참조
+- `e0509_gripper_isaac` 폴더를 레포에 추가하고 Docker 볼륨 마운트로 해결
+
+#### 펜 스폰 범위 수정 (실제 작업 공간 기준)
+```python
+# 실제 로봇 작업 범위 측정값 기준
+"pose_range": {
+    "x": (-0.2, 0.2),      # 로봇 기준 0.3~0.7m
+    "y": (-0.3, 0.3),      # 좌우 ±30cm
+    "z": (-0.2, 0.2),      # 높이 0.1~0.5m
+}
+```
+
+#### play.py 마커 추가
+- Tip (파란색): 필기 끝 (pen_pos + axis * half_len)
+- Cap (빨간색): 그리퍼가 잡아야 할 곳 (pen_pos - axis * half_len)
+
+#### 새 노트북 학습 시작
+- **하드웨어**: RTX 5080 (16GB VRAM)
+- **설정**: num_envs=8192, max_iterations=10000
+- **상태**: 학습 진행 중
+- **TensorBoard**: 컨테이너 내부에서 실행 권장
+
+#### 관련 문서
+- `DOCKER_GUIDE.md`: Docker 환경 설정 가이드
+- `docker_setup.sh`: 컨테이너 내 의존성 설치 스크립트
