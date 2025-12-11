@@ -5,7 +5,12 @@ Task: Grasp pen cap and hold in writing pose
 """
 from __future__ import annotations
 
+import os
 import torch
+
+# Get path to robot USD file (relative to this file)
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROBOT_USD_PATH = os.path.join(_SCRIPT_DIR, "..", "models", "first_control.usd")
 
 import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
@@ -50,7 +55,7 @@ class PenGraspSceneCfg(InteractiveSceneCfg):
     robot: ArticulationCfg = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
-            usd_path="/home/fhekwn549/isaac_pen_trajectory/models/doosan_e0509/first_control.usd",
+            usd_path=ROBOT_USD_PATH,
             activate_contact_sensors=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
