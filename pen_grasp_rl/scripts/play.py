@@ -81,11 +81,11 @@ def main():
         prim_path="/World/Visuals/PenMarkers",
         markers={
             "tip": sim_utils.SphereCfg(
-                radius=0.008,
+                radius=0.015,
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),  # Blue
             ),
             "cap": sim_utils.SphereCfg(
-                radius=0.008,
+                radius=0.015,
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),  # Red
             ),
         }
