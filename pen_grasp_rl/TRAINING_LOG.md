@@ -152,3 +152,75 @@ yaw = torch.rand(num_resets, device=self.device) * 6.28 - 3.14  # 360° 랜덤
 #### 관련 문서
 - `DOCKER_GUIDE.md`: Docker 환경 설정 가이드
 - `docker_setup.sh`: 컨테이너 내 의존성 설치 스크립트
+
+---
+
+### 2025-12-11 Grasp Point 및 보상함수 개선
+
+#### 문제 분석
+- 기존 gripper center가 손가락 끝 중앙이라 그리퍼 open/close 상태에 따라 이동
+- 보상함수가 펜에 접근만 유도하고, 정렬(orientation)은 고려하지 않음
+
+#### 변경 사항
+
+**1. Grasp Point 계산 방식 변경 (`pen_grasp_env.py`)**
+```python
+def get_grasp_point(robot: Articulation) -> torch.Tensor:
+    """Get ideal grasp point: (l1+r1)/2 center + 2cm along finger direction.
+
+    This point is stable regardless of gripper open/close state.
+    """
+    # [7] l1, [8] r1 = 손가락 베이스
+    # [9] l2, [10] r2 = 손가락 끝
+    l1 = robot.data.body_pos_w[:, 7, :]
+    r1 = robot.data.body_pos_w[:, 8, :]
+    l2 = robot.data.body_pos_w[:, 9, :]
+    r2 = robot.data.body_pos_w[:, 10, :]
+
+    base_center = (l1 + r1) / 2.0
+    tip_center = (l2 + r2) / 2.0
+    finger_dir = tip_center - base_center
+    finger_dir = finger_dir / (torch.norm(finger_dir, dim=-1, keepdim=True) + 1e-6)
+
+    return base_center + finger_dir * 0.02  # 2cm along finger direction
+```
+
+**2. z축 정렬 보상함수 추가**
+```python
+def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Reward for aligning gripper z-axis with pen z-axis.
+
+    Only gives reward when:
+    1. Gripper is close to pen cap (within 5cm)
+    2. Z-axes are nearly parallel (dot product > 0.9)
+    """
+    # ... pen z-axis, gripper z-axis 계산 ...
+
+    dot_product = torch.sum(pen_z_axis * gripper_z_axis, dim=-1)
+
+    # Only reward when nearly parallel (dot > 0.9)
+    alignment_reward = torch.clamp(dot_product - 0.9, min=0.0) * 10.0
+
+    # Only apply when close to cap (within 5cm)
+    distance_factor = torch.clamp(1.0 - distance_to_cap / 0.05, min=0.0)
+
+    return alignment_reward * distance_factor
+```
+
+**3. 현재 보상함수 구성**
+| 보상함수 | weight | 설명 |
+|---------|--------|------|
+| `distance_to_cap` | 1.0 | grasp point → 펜 캡 거리 |
+| `z_axis_alignment` | 0.5 | z축 정렬 (캡 5cm 이내 + dot>0.9 일때만) |
+| `action_rate` | 0.1 | 액션 크기 페널티 |
+
+**4. play.py 마커 개선**
+- Cap (빨강): 펜 캡 위치 (목표)
+- Grasp Point (초록): 그리퍼 잡기 위치
+- Pen z-axis (파랑): 펜 중심에서 z축 방향 (5개 점, 15cm)
+- Gripper z-axis (노랑): grasp point에서 link_6 z축 방향 (5개 점, 15cm)
+
+#### 커리큘럼 러닝 전략
+- **Phase 1 (현재)**: 펜 kinematic, 위치+정렬 학습
+- **Phase 2 (추후)**: 펜 dynamic, 잡기 동작 학습
+- 기존 학습된 "접근+정렬" 정책이 Phase 2에서 fine-tuning으로 활용됨

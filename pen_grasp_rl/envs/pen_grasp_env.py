@@ -192,11 +192,33 @@ def joint_vel_obs(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Te
     return asset.data.joint_vel
 
 
+def get_grasp_point(robot: Articulation) -> torch.Tensor:
+    """Get ideal grasp point: (l1+r1)/2 center + 2cm along finger direction.
+
+    This point is stable regardless of gripper open/close state.
+    """
+    # [7] gripper_rh_p12_rn_l1 = left finger base
+    # [8] gripper_rh_p12_rn_r1 = right finger base
+    # [9] gripper_rh_p12_rn_l2 = left finger tip
+    # [10] gripper_rh_p12_rn_r2 = right finger tip
+    l1 = robot.data.body_pos_w[:, 7, :]
+    r1 = robot.data.body_pos_w[:, 8, :]
+    l2 = robot.data.body_pos_w[:, 9, :]
+    r2 = robot.data.body_pos_w[:, 10, :]
+
+    base_center = (l1 + r1) / 2.0
+    tip_center = (l2 + r2) / 2.0
+    finger_dir = tip_center - base_center
+    finger_dir = finger_dir / (torch.norm(finger_dir, dim=-1, keepdim=True) + 1e-6)
+
+    return base_center + finger_dir * 0.02  # 2cm along finger direction
+
+
 def ee_pos_obs(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
-    """End-effector position relative to env origin."""
+    """Grasp point position relative to env origin."""
     asset: Articulation = env.scene[asset_cfg.name]
-    ee_pos_w = asset.data.body_pos_w[:, -1, :]  # Last body (gripper)
-    return ee_pos_w - env.scene.env_origins
+    grasp_pos_w = get_grasp_point(asset)
+    return grasp_pos_w - env.scene.env_origins
 
 
 def pen_pos_obs(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
@@ -206,12 +228,12 @@ def pen_pos_obs(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tens
 
 
 def relative_ee_pen_obs(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Relative position from end-effector to pen center."""
+    """Relative position from grasp point to pen center."""
     robot: Articulation = env.scene["robot"]
     pen: RigidObject = env.scene["pen"]
-    ee_pos = robot.data.body_pos_w[:, -1, :]
+    grasp_pos = get_grasp_point(robot)
     pen_pos = pen.data.root_pos_w
-    return pen_pos - ee_pos
+    return pen_pos - grasp_pos
 
 
 def pen_orientation_obs(env: ManagerBasedRLEnv) -> torch.Tensor:
@@ -247,11 +269,11 @@ def pen_cap_pos_obs(env: ManagerBasedRLEnv) -> torch.Tensor:
 
 
 def relative_ee_cap_obs(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Relative position from end-effector to pen cap (point b)."""
+    """Relative position from grasp point to pen cap (point b)."""
     robot: Articulation = env.scene["robot"]
     pen: RigidObject = env.scene["pen"]
 
-    ee_pos = robot.data.body_pos_w[:, -1, :]
+    grasp_pos = get_grasp_point(robot)
     pen_pos = pen.data.root_pos_w
     pen_quat = pen.data.root_quat_w
 
@@ -265,18 +287,18 @@ def relative_ee_cap_obs(env: ManagerBasedRLEnv) -> torch.Tensor:
     # Cap position
     cap_pos = pen_pos + (PEN_LENGTH / 2) * cap_dir
 
-    return cap_pos - ee_pos
+    return cap_pos - grasp_pos
 
 
 ##
 # Reward Terms
 ##
 def distance_ee_cap_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Reward for moving end-effector close to pen cap (point b)."""
+    """Reward for moving grasp point close to pen cap (point b)."""
     robot: Articulation = env.scene["robot"]
     pen: RigidObject = env.scene["pen"]
 
-    ee_pos = robot.data.body_pos_w[:, -1, :]
+    grasp_pos = get_grasp_point(robot)
     pen_pos = pen.data.root_pos_w
     pen_quat = pen.data.root_quat_w
 
@@ -290,13 +312,59 @@ def distance_ee_cap_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     # Cap position
     cap_pos = pen_pos + (PEN_LENGTH / 2) * cap_dir
 
-    distance = torch.norm(ee_pos - cap_pos, dim=-1)
+    distance = torch.norm(grasp_pos - cap_pos, dim=-1)
     return 1.0 / (1.0 + distance * 10.0)
 
 
 def action_rate_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Penalty for large action changes."""
     return -torch.sum(torch.square(env.action_manager.action), dim=-1) * 0.001
+
+
+def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Reward for aligning gripper z-axis with pen z-axis.
+
+    Only gives reward when:
+    1. Gripper is close to pen cap (within 5cm)
+    2. Z-axes are nearly parallel (dot product > 0.9)
+    """
+    robot: Articulation = env.scene["robot"]
+    pen: RigidObject = env.scene["pen"]
+
+    # Get pen z-axis in world frame
+    pen_pos = pen.data.root_pos_w
+    pen_quat = pen.data.root_quat_w
+    qw, qx, qy, qz = pen_quat[:, 0], pen_quat[:, 1], pen_quat[:, 2], pen_quat[:, 3]
+    pen_z_x = 2.0 * (qx * qz + qw * qy)
+    pen_z_y = 2.0 * (qy * qz - qw * qx)
+    pen_z_z = 1.0 - 2.0 * (qx * qx + qy * qy)
+    pen_z_axis = torch.stack([pen_z_x, pen_z_y, pen_z_z], dim=-1)
+
+    # Cap position (pen center - half_length * z_axis)
+    cap_pos = pen_pos - (PEN_LENGTH / 2) * pen_z_axis
+
+    # Get grasp point and distance to cap
+    grasp_pos = get_grasp_point(robot)
+    distance_to_cap = torch.norm(grasp_pos - cap_pos, dim=-1)
+
+    # Get gripper z-axis from link_6 orientation
+    link6_quat = robot.data.body_quat_w[:, 6, :]  # [6] link_6
+    qw, qx, qy, qz = link6_quat[:, 0], link6_quat[:, 1], link6_quat[:, 2], link6_quat[:, 3]
+    gripper_z_x = 2.0 * (qx * qz + qw * qy)
+    gripper_z_y = 2.0 * (qy * qz - qw * qx)
+    gripper_z_z = 1.0 - 2.0 * (qx * qx + qy * qy)
+    gripper_z_axis = torch.stack([gripper_z_x, gripper_z_y, gripper_z_z], dim=-1)
+
+    # Dot product: 1.0 = parallel, -1.0 = opposite, 0 = perpendicular
+    dot_product = torch.sum(pen_z_axis * gripper_z_axis, dim=-1)
+
+    # 1. Only reward when nearly parallel (dot > 0.9)
+    alignment_reward = torch.clamp(dot_product - 0.9, min=0.0) * 10.0  # 0.9~1.0 → 0~1
+
+    # 2. Only apply when close to cap (within 5cm)
+    distance_factor = torch.clamp(1.0 - distance_to_cap / 0.05, min=0.0)
+
+    return alignment_reward * distance_factor
 
 
 ##
@@ -345,6 +413,7 @@ class ObservationsCfg:
 class RewardsCfg:
     """Reward specifications for the MDP."""
     distance_to_cap = RewTerm(func=distance_ee_cap_reward, weight=1.0)  # Reward for approaching cap (point b)
+    z_axis_alignment = RewTerm(func=z_axis_alignment_reward, weight=0.5)  # Reward for aligning gripper z-axis with pen
     action_rate = RewTerm(func=action_rate_penalty, weight=0.1)
 
 
