@@ -8,11 +8,11 @@ echo "=========================================="
 echo "Installing pen_grasp_rl dependencies..."
 echo "=========================================="
 
-# Install rsl_rl from GitHub
-pip install git+https://github.com/leggedrobotics/rsl_rl.git
+# Install rsl_rl from GitHub (use python -m pip for Docker)
+python -m pip install git+https://github.com/leggedrobotics/rsl_rl.git
 
 # Install tensordict (required by rsl_rl)
-pip install tensordict
+python -m pip install tensordict
 
 echo "=========================================="
 echo "Dependencies installed successfully!"
