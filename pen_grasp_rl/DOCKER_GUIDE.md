@@ -96,9 +96,14 @@ git clone https://github.com/KERNEL3-2/COBOT_WRITER.git
 
 # 3. pen_grasp_rl을 IsaacLab 안으로 복사
 cp -r ~/COBOT_WRITER/pen_grasp_rl ~/IsaacLab/
+
+# 4. 로봇 USD 파일을 홈 디렉토리에 복사 (Docker 마운트용)
+cp -r ~/COBOT_WRITER/e0509_gripper_isaac ~/
 ```
 
-> **참고**: 로봇 USD 파일(`first_control.usd`)은 `pen_grasp_rl/models/`에 포함되어 있습니다.
+> **참고**:
+> - 로봇 USD 파일(`first_control.usd`)은 `pen_grasp_rl/models/`에 포함되어 있습니다.
+> - `e0509_gripper_isaac/`는 로봇 모델이 참조하는 추가 USD 파일입니다.
 
 ### 3.2 Docker 설정 파일 수정
 ```bash
@@ -116,9 +121,15 @@ cd ~/IsaacLab/docker
   - type: bind
     source: ../logs
     target: ${DOCKER_ISAACLAB_PATH}/logs
+    # 로봇 USD 참조 파일 (first_control.usd가 참조함)
+  - type: bind
+    source: ~/e0509_gripper_isaac
+    target: /workspace/e0509_gripper_isaac
 ```
 
-> **참고**: logs를 bind mount하면 학습 결과를 호스트에서 바로 확인/복사할 수 있습니다.
+> **참고**:
+> - logs를 bind mount하면 학습 결과를 호스트에서 바로 확인/복사할 수 있습니다.
+> - e0509_gripper_isaac은 로봇 USD 파일이 참조하는 경로이므로 반드시 마운트해야 합니다.
 
 ### 3.3 Docker 이미지 빌드 및 실행
 ```bash
@@ -289,7 +300,8 @@ docker logout nvcr.io
 - [ ] Isaac Lab 클론 (`git clone https://github.com/isaac-sim/IsaacLab.git`)
 - [ ] 팀 프로젝트 클론 (`git clone https://github.com/KERNEL3-2/COBOT_WRITER.git`)
 - [ ] pen_grasp_rl 폴더를 IsaacLab 안으로 복사
-- [ ] docker-compose.yaml에 볼륨 마운트 추가 (pen_grasp_rl, logs)
+- [ ] e0509_gripper_isaac 폴더를 홈 디렉토리로 복사
+- [ ] docker-compose.yaml에 볼륨 마운트 추가 (pen_grasp_rl, logs, e0509_gripper_isaac)
 - [ ] `./docker/container.py start` (빌드 + 실행)
 - [ ] `./pen_grasp_rl/docker_setup.sh` (컨테이너 내부)
 
