@@ -105,14 +105,22 @@ rm -rf temp_cobot
 ### 3.2 Docker 설정 파일 수정
 ```bash
 cd ~/IsaacLab/docker
-
-# pen_grasp_rl 볼륨 마운트 추가 (docker-compose.yaml 수정)
-# 아래 내용을 x-default-isaac-lab-volumes 섹션에 추가:
-#
-#   - type: bind
-#     source: ../pen_grasp_rl
-#     target: ${DOCKER_ISAACLAB_PATH}/pen_grasp_rl
 ```
+
+`docker-compose.yaml` 파일을 열고 `x-default-isaac-lab-volumes` 섹션에 아래 내용 추가:
+
+```yaml
+    # Pen Grasp RL project
+  - type: bind
+    source: ../pen_grasp_rl
+    target: ${DOCKER_ISAACLAB_PATH}/pen_grasp_rl
+    # Logs - 호스트에서 바로 접근 가능하도록
+  - type: bind
+    source: ../logs
+    target: ${DOCKER_ISAACLAB_PATH}/logs
+```
+
+> **참고**: logs를 bind mount하면 학습 결과를 호스트에서 바로 확인/복사할 수 있습니다.
 
 ### 3.3 Docker 이미지 빌드
 ```bash
