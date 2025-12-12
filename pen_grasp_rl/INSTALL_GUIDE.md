@@ -92,13 +92,13 @@ cd ~
 git clone https://github.com/isaac-sim/IsaacLab.git
 
 # 2. 팀 프로젝트 클론 (pen_grasp_rl + 로봇 USD 파일 포함)
-git clone https://github.com/KERNEL3-2/COBOT_WRITER.git
+git clone https://github.com/KERNEL3-2/CoWriteBotRL.git
 
 # 3. pen_grasp_rl을 IsaacLab 안으로 복사
-cp -r ~/COBOT_WRITER/pen_grasp_rl ~/IsaacLab/
+cp -r ~/CoWriteBotRL/pen_grasp_rl ~/IsaacLab/
 
 # 4. 로봇 USD 파일을 홈 디렉토리에 복사 (Docker 마운트용)
-cp -r ~/COBOT_WRITER/e0509_gripper_isaac ~/
+cp -r ~/CoWriteBotRL/e0509_gripper_isaac ~/
 ```
 
 > **참고**:
