@@ -125,13 +125,23 @@ def main():
     # =========================================================================
     # 2. 시각화 마커 설정
     # =========================================================================
-    # Z축 방향만 시각화 (간소화된 버전)
+    # 캡, 그립 포인트, 축 방향 시각화
     marker_cfg = VisualizationMarkersCfg(
         prim_path="/World/Visuals/PenMarkers",
         markers={
+            # 펜 캡 위치 (빨간색) - 잡아야 할 목표
+            "cap": sim_utils.SphereCfg(
+                radius=0.01,
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+            ),
+            # 그리퍼 잡기 포인트 (녹색)
+            "grasp_point": sim_utils.SphereCfg(
+                radius=0.01,
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+            ),
             # 펜 Z축 방향 (파란색 점들)
             "pen_axis": sim_utils.SphereCfg(
-                radius=0.005,  # 작은 크기로 축 표시
+                radius=0.005,
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.5, 1.0)),
             ),
             # 그리퍼 Z축 방향 (노란색 점들)
@@ -223,7 +233,7 @@ def main():
             half_len = PEN_LENGTH / 2.0
             pen_axis = torch.tensor([[0.0, 0.0, 1.0]], device=pen_pos.device).expand(pen_pos.shape[0], -1)
             pen_axis_world = quat_rotate_vector(pen_quat, pen_axis)
-            cap_pos = pen_pos - pen_axis_world * half_len  # -Z 방향이 팁, +Z가 캡
+            cap_pos = pen_pos + pen_axis_world * half_len  # +Z 방향이 뒷캡 (잡을 부분)
 
             # --- 그리퍼 Z축 계산 ---
             link6_quat = robot.data.body_quat_w[:, 6, :]
@@ -235,26 +245,33 @@ def main():
             init_pos = torch.tensor([0.5, 0.0, 0.3], device=pen_pos.device)
             displacement = torch.norm(pen_pos_local - init_pos, dim=-1)
 
-            # --- 마커 위치 구성 (Z축 마커만) ---
+            # --- 마커 위치 구성 ---
+            # 각 환경마다: cap(1) + grasp_point(1) + pen_axis(5) + gripper_axis(5) = 12개
             num_envs = pen_pos.shape[0]
-            markers_per_env = AXIS_POINTS * 2  # 펜축 + 그리퍼축
+            markers_per_env = 2 + AXIS_POINTS * 2
             all_positions = torch.zeros((num_envs * markers_per_env, 3), device=pen_pos.device)
             marker_indices = []
 
             for i in range(num_envs):
                 base_idx = i * markers_per_env
+                # 캡 마커 (빨간색)
+                all_positions[base_idx] = cap_pos[i]
+                marker_indices.append(0)
+                # 잡기 포인트 마커 (녹색)
+                all_positions[base_idx + 1] = grasp_point[i]
+                marker_indices.append(1)
 
                 # 펜 Z축 마커들 (파란색)
                 for j in range(AXIS_POINTS):
                     t = (j + 1) / AXIS_POINTS * AXIS_LENGTH
-                    all_positions[base_idx + j] = pen_pos[i] + pen_axis_world[i] * t
-                    marker_indices.append(0)  # pen_axis
+                    all_positions[base_idx + 2 + j] = pen_pos[i] + pen_axis_world[i] * t
+                    marker_indices.append(2)  # pen_axis
 
                 # 그리퍼 Z축 마커들 (노란색)
                 for j in range(AXIS_POINTS):
                     t = (j + 1) / AXIS_POINTS * AXIS_LENGTH
-                    all_positions[base_idx + AXIS_POINTS + j] = grasp_point[i] + gripper_z_world[i] * t
-                    marker_indices.append(1)  # gripper_axis
+                    all_positions[base_idx + 2 + AXIS_POINTS + j] = grasp_point[i] + gripper_z_world[i] * t
+                    marker_indices.append(3)  # gripper_axis
 
             pen_markers.visualize(translations=all_positions, marker_indices=marker_indices)
 

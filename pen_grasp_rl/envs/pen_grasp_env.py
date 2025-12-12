@@ -63,8 +63,8 @@ from isaaclab.actuators import ImplicitActuatorCfg  # 액추에이터(모터) �
 # =============================================================================
 # 펜 물리 사양 (실제 펜 측정값)
 # =============================================================================
-PEN_DIAMETER = 0.0198  # 펜 지름: 19.8mm
-PEN_LENGTH = 0.117     # 펜 길이: 117mm (캡 제외)
+PEN_DIAMETER = 0.0198  # 펜 최대 지름: 19.8mm
+PEN_LENGTH = 0.1207    # 펜 전체 길이: 120.7mm (뚜껑 포함)
 PEN_MASS = 0.0163      # 펜 무게: 16.3g
 
 
@@ -169,21 +169,17 @@ class PenGraspSceneCfg(InteractiveSceneCfg):
     # =========================================================================
     # 펜 객체 설정
     # =========================================================================
-    # 실린더 형태의 펜 (공중에 떠있음 - 사람이 들고 있는 것처럼)
+    # USD 파일로 정의된 펜 (실제 펜 형상: 원뿔대 + 반구)
     pen: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Pen",
-        spawn=sim_utils.CylinderCfg(
-            radius=0.005,       # 반지름 5mm (지름 10mm)
-            height=PEN_LENGTH,  # 높이 117mm
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=PEN_USD_PATH,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,     # 중력 비활성화 (공중에 고정)
                 kinematic_enabled=False,  # 물리 충돌 활성화 (그리퍼가 밀 수 있음)
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=PEN_MASS),  # 16.3g
             collision_props=sim_utils.CollisionPropertiesCfg(),    # 충돌 활성화
-            visual_material=sim_utils.PreviewSurfaceCfg(
-                diffuse_color=(0.0, 0.0, 0.8)  # 파란색 펜
-            ),
         ),
         # 초기 위치: 작업 공간 중심 (로봇 앞쪽)
         init_state=RigidObjectCfg.InitialStateCfg(
