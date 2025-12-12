@@ -104,14 +104,16 @@ class PenGraspSceneCfg(InteractiveSceneCfg):
     # Pen object (floating in air with collision - can be knocked down by gripper)
     pen: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Pen",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=PEN_USD_PATH,
+        spawn=sim_utils.CylinderCfg(
+            radius=0.005,  # 5mm radius (10mm diameter pen)
+            height=PEN_LENGTH,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,  # Floating in air (held by human)
                 kinematic_enabled=False,  # Enable collision physics
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=PEN_MASS),
             collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 0.8)),  # Blue pen
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
             pos=(0.5, 0.0, 0.3),  # Center of workspace (x:0.3~0.7, y:±0.3, z:0.1~0.5)
