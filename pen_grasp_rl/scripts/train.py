@@ -4,6 +4,7 @@ Training script for Pen Grasp RL
 import argparse
 import os
 import sys
+from datetime import datetime
 
 # Add project path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -80,14 +81,20 @@ def main():
     # Wrap environment for RSL-RL
     env = RslRlVecEnvWrapper(env)
 
+    # Create timestamped log directory
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_dir = f"./logs/pen_grasp/{timestamp}"
+    os.makedirs(log_dir, exist_ok=True)
+
     # Create runner
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir="./logs/pen_grasp", device=agent_cfg.device)
+    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
 
     # Train
     print("=" * 50)
     print("Starting training...")
     print(f"  Num envs: {args.num_envs}")
     print(f"  Max iterations: {args.max_iterations}")
+    print(f"  Log dir: {log_dir}")
     print("=" * 50)
 
     runner.learn(num_learning_iterations=args.max_iterations)

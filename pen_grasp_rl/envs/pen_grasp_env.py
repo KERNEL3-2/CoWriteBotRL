@@ -343,9 +343,10 @@ def floor_collision_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
 def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Reward for aligning gripper z-axis with pen z-axis.
 
-    Only gives reward when:
-    1. Gripper is close to pen cap (within 5cm)
-    2. Z-axes are nearly parallel (dot product > 0.9)
+    Distance-weighted alignment reward:
+    - Alignment is rewarded at any distance
+    - Closer distance gives higher weight (1/distance scaling)
+    - This encourages both approaching AND aligning simultaneously
     """
     robot: Articulation = env.scene["robot"]
     pen: RigidObject = env.scene["pen"]
@@ -374,16 +375,22 @@ def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     gripper_z_z = 1.0 - 2.0 * (qx * qx + qy * qy)
     gripper_z_axis = torch.stack([gripper_z_x, gripper_z_y, gripper_z_z], dim=-1)
 
-    # Dot product: 1.0 = parallel, -1.0 = opposite, 0 = perpendicular
+    # Dot product: 1.0 = parallel (cap direction), -1.0 = opposite (tip direction), 0 = perpendicular
+    # Only reward positive alignment (gripper pointing toward cap, not tip)
     dot_product = torch.sum(pen_z_axis * gripper_z_axis, dim=-1)
 
-    # 1. Only reward when nearly parallel (dot > 0.9)
-    alignment_reward = torch.clamp(dot_product - 0.9, min=0.0) * 10.0  # 0.9~1.0 → 0~1
+    # Distance-weighted alignment reward
+    # - alignment_score: 0 (perpendicular or wrong direction) ~ 1 (parallel, correct direction)
+    # - clamp to 0 to ignore negative (wrong direction) alignment
+    alignment_score = torch.clamp(dot_product, min=0.0)  # 0 ~ 1
 
-    # 2. Only apply when close to cap (within 5cm)
-    distance_factor = torch.clamp(1.0 - distance_to_cap / 0.05, min=0.0)
+    # Distance weight: 1/(distance + 0.05) normalized
+    # At 5cm: weight = 1/(0.05+0.05) = 10
+    # At 50cm: weight = 1/(0.5+0.05) ≈ 1.8
+    distance_weight = 1.0 / (distance_to_cap + 0.05)
 
-    return alignment_reward * distance_factor
+    # Normalize to reasonable range (divide by 10 to keep similar scale)
+    return alignment_score * distance_weight * 0.1
 
 
 ##

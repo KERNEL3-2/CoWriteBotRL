@@ -265,3 +265,43 @@ def floor_collision_penalty(env) -> torch.Tensor:
 | `z_axis_alignment` | 0.5 | z축 정렬 (5cm 이내 + dot>0.9) |
 | `floor_collision` | 1.0 | 바닥 실제 충돌 시 -1 페널티 |
 | `action_rate` | 0.1 | 액션 크기 페널티 |
+
+---
+
+### 2025-12-12 z_axis_alignment 보상함수 개선
+
+#### 50,000 iteration 학습 결과 분석
+- **distance_to_cap**: 0.96 (성공적으로 펜 캡 접근 학습)
+- **z_axis_alignment**: ~0 (정렬 보상 거의 없음)
+- **floor_collision**: -0.001 (바닥 충돌 거의 없음)
+
+#### 문제점
+기존 z_axis_alignment 조건이 너무 까다로움:
+- 5cm 이내 접근 AND dot product > 0.9 일때만 보상
+- 로봇이 접근은 하지만 정확한 각도로 정렬되는 순간이 거의 없어 보상을 못 받음
+
+#### 해결책: 거리 기반 가중치 적용
+```python
+def z_axis_alignment_reward(env) -> torch.Tensor:
+    # 기존: 5cm 이내 + dot > 0.9 일때만 보상
+    # 변경: 거리와 무관하게 정렬 보상, 단 가까울수록 가중치 증가
+
+    # dot product: 양수만 보상 (캡 방향만 허용, 팁 방향은 보상 0)
+    dot_product = torch.sum(pen_z_axis * gripper_z_axis, dim=-1)
+    alignment_score = torch.clamp(dot_product, min=0.0)  # 0 ~ 1
+
+    # 거리 가중치: 가까울수록 높음
+    # 5cm: weight = 10, 50cm: weight ≈ 1.8
+    distance_weight = 1.0 / (distance_to_cap + 0.05)
+
+    return alignment_score * distance_weight * 0.1
+```
+
+#### 개선 효과
+- 멀리서도 방향 맞추면 작은 보상 (방향 학습 힌트)
+- 가까이 가면서 정렬하면 큰 보상
+- 접근 + 정렬 동시 학습 유도
+
+#### 다음 단계
+- [ ] 새로운 보상함수로 학습 실행
+- [ ] TensorBoard에서 z_axis_alignment 보상 증가 확인
