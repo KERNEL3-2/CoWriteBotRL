@@ -402,3 +402,107 @@ def pen_dropped_termination(env) -> torch.Tensor:
 - [ ] Phase 2 학습 실행
 - [ ] 펜을 밀지 않고 조심스럽게 접근하는지 확인
 - [ ] grasp_success 보상이 발생하는지 확인
+
+---
+
+### 2025-12-12 그리퍼 회전 수정 및 정밀 펜 모델 적용
+
+#### 문제 발견
+- 강화학습 USD 내의 그리퍼가 실제 그리퍼와 90도 회전되어 있었음
+- XACRO 파일의 `gripper_attach_joint` rpy 값이 잘못 설정됨
+
+#### 그리퍼 USD 수정
+
+**1. XACRO 파일 수정**
+```xml
+<!-- 이전 -->
+<joint name="gripper_attach_joint" type="fixed">
+  <origin xyz="0 0 0" rpy="0 0 0"/>
+</joint>
+
+<!-- 수정 -->
+<joint name="gripper_attach_joint" type="fixed">
+  <origin xyz="0 0 0" rpy="0 0 1.5708"/>  <!-- Z축 90도 회전 -->
+</joint>
+```
+
+**2. USD 재생성**
+```bash
+# XACRO → URDF
+xacro e0509_with_gripper.urdf.xacro > e0509_gripper_isaaclab_absolute.urdf
+
+# package:// 경로를 절대 경로로 변환
+sed -i 's|package://e0509_description|/home/.../e0509_description|g' ...
+
+# URDF → USD (Isaac Lab 변환기 사용)
+./isaaclab.sh -p scripts/tools/convert_urdf.py \
+  e0509_gripper_isaaclab_absolute.urdf \
+  e0509_gripper_isaaclab/e0509_gripper_isaaclab.usd \
+  --merge-joints
+```
+
+#### 정밀 펜 USD 모델 생성
+
+**펜 구조 (뚜껑 씌운 상태)**
+```
+[뒷캡] ─── [본체] ─── [펜촉 뚜껑]
+  5mm      81.7mm       34mm
+           ↓
+        전체 120.7mm
+```
+
+| 부분 | 형태 | 치수 |
+|------|------|------|
+| 뒷캡 | 원통 | Ø13.5mm, 5mm |
+| 본체 | 원뿔대 | Ø19.8mm → Ø17mm, 81.7mm |
+| 펜촉 뚜껑 (원뿔대) | 원뿔대 | Ø17mm → Ø16mm, 29mm |
+| 펜촉 뚜껑 (반구) | 반구 | Ø16mm, 5mm |
+| 무게 | - | 16.3g |
+
+**create_pen_usd.py 스크립트 작성**
+- `create_truncated_cone_mesh()`: 원뿔대 메시 생성
+- `create_hemisphere_mesh()`: 반구 메시 생성
+- RigidBodyAPI, MassAPI, CollisionAPI 적용
+
+#### 환경 설정 변경
+
+**pen_grasp_env.py 수정**
+```python
+# 이전: CylinderCfg (단순 원통)
+spawn=sim_utils.CylinderCfg(
+    radius=0.005,
+    height=PEN_LENGTH,
+    ...
+)
+
+# 변경: UsdFileCfg (정밀 모델)
+spawn=sim_utils.UsdFileCfg(
+    usd_path=PEN_USD_PATH,
+    rigid_props=sim_utils.RigidBodyPropertiesCfg(
+        disable_gravity=True,
+        kinematic_enabled=False,
+    ),
+    mass_props=sim_utils.MassPropertiesCfg(mass=PEN_MASS),
+    collision_props=sim_utils.CollisionPropertiesCfg(),
+)
+```
+
+**상수 변경**
+```python
+PEN_LENGTH = 0.1207  # 120.7mm (이전: 117mm)
+```
+
+#### test_env.py 마커 추가
+- 빨간색: 펜 뒷캡 위치 (+Z 방향, 잡을 부분)
+- 초록색: 그리퍼 잡기 포인트
+- 파란색: 펜 Z축 방향
+- 노란색: 그리퍼 Z축 방향
+
+#### 검증 결과
+- 그리퍼 수직 방향 확인 ✓
+- 펜 모델 형상 정확 ✓
+- 보상함수 목표 위치 (뒷캡) 확인 ✓
+
+#### 다음 단계
+- [ ] 새 모델로 Phase 2 학습 실행
+- [ ] 정밀 펜 모델에서 그립 동작 확인
