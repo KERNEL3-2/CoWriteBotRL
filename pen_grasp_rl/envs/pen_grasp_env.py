@@ -8,9 +8,10 @@ from __future__ import annotations
 import os
 import torch
 
-# Get path to robot USD file (relative to this file)
+# Get path to USD files (relative to this file)
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROBOT_USD_PATH = os.path.join(_SCRIPT_DIR, "..", "models", "first_control.usd")
+PEN_USD_PATH = os.path.join(_SCRIPT_DIR, "..", "models", "pen.usd")
 
 import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
@@ -32,7 +33,7 @@ from isaaclab.actuators import ImplicitActuatorCfg
 # Pen specifications
 ##
 PEN_DIAMETER = 0.0198  # 19.8mm
-PEN_LENGTH = 0.1207    # 120.7mm
+PEN_LENGTH = 0.117     # 117mm (without cap)
 PEN_MASS = 0.0163      # 16.3g
 
 ##
@@ -100,19 +101,17 @@ class PenGraspSceneCfg(InteractiveSceneCfg):
         },
     )
 
-    # Pen object (floating in air, like held by human)
+    # Pen object (floating in air with collision - can be knocked down by gripper)
     pen: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Pen",
-        spawn=sim_utils.CylinderCfg(
-            radius=PEN_DIAMETER / 2,
-            height=PEN_LENGTH,
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=PEN_USD_PATH,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,  # Floating in air (held by human)
-                kinematic_enabled=True,  # Fixed in place
+                kinematic_enabled=False,  # Enable collision physics
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=PEN_MASS),
             collision_props=sim_utils.CollisionPropertiesCfg(),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.1, 0.3)),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
             pos=(0.5, 0.0, 0.3),  # Center of workspace (x:0.3~0.7, y:±0.3, z:0.1~0.5)
@@ -240,6 +239,16 @@ def pen_orientation_obs(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Pen orientation as quaternion (to distinguish cap vs tip)."""
     pen: RigidObject = env.scene["pen"]
     return pen.data.root_quat_w  # (num_envs, 4)
+
+
+def gripper_state_obs(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Gripper open/close state (mean of 4 gripper joints).
+
+    Returns value between 0 (open) and ~1 (closed).
+    """
+    robot: Articulation = env.scene["robot"]
+    gripper_pos = robot.data.joint_pos[:, 6:10]  # joints 6-9 are gripper
+    return gripper_pos.mean(dim=-1, keepdim=True)  # (num_envs, 1)
 
 
 def pen_cap_pos_obs(env: ManagerBasedRLEnv) -> torch.Tensor:
@@ -375,14 +384,15 @@ def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     gripper_z_z = 1.0 - 2.0 * (qx * qx + qy * qy)
     gripper_z_axis = torch.stack([gripper_z_x, gripper_z_y, gripper_z_z], dim=-1)
 
-    # Dot product: 1.0 = parallel (cap direction), -1.0 = opposite (tip direction), 0 = perpendicular
-    # Only reward positive alignment (gripper pointing toward cap, not tip)
+    # Dot product: 1.0 = parallel (same direction), -1.0 = opposite (facing each other)
+    # For grasping: gripper should face OPPOSITE to pen z-axis (gripper approaches cap from outside)
+    # So we reward when dot_product = -1.0 (opposite directions)
     dot_product = torch.sum(pen_z_axis * gripper_z_axis, dim=-1)
 
     # Distance-weighted alignment reward
-    # - alignment_score: 0 (perpendicular or wrong direction) ~ 1 (parallel, correct direction)
-    # - clamp to 0 to ignore negative (wrong direction) alignment
-    alignment_score = torch.clamp(dot_product, min=0.0)  # 0 ~ 1
+    # - alignment_score: 0 (perpendicular or same direction) ~ 1 (opposite, correct grasp direction)
+    # - negate dot_product: -1.0 becomes +1.0 (reward), +1.0 becomes -1.0 (no reward)
+    alignment_score = torch.clamp(-dot_product, min=0.0)  # 0 ~ 1
 
     # Distance weight: 1/(distance + 0.05) normalized
     # At 5cm: weight = 1/(0.05+0.05) = 10
@@ -393,14 +403,97 @@ def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     return alignment_score * distance_weight * 0.1
 
 
+def pen_displacement_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Penalty for displacing the pen from its initial position.
+
+    Since kinematic_enabled=False, the pen can be knocked around.
+    This penalty discourages hitting the pen without proper grasp.
+    """
+    pen: RigidObject = env.scene["pen"]
+
+    # Get pen velocity - if pen is moving, it's being knocked
+    pen_vel = pen.data.root_lin_vel_w  # (num_envs, 3)
+    vel_magnitude = torch.norm(pen_vel, dim=-1)
+
+    # Penalty proportional to velocity (pen should stay still unless properly grasped)
+    return -vel_magnitude * 0.5
+
+
+def grasp_success_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Reward for successfully grasping the pen cap.
+
+    Grasp is successful when:
+    1. Gripper is close to pen cap (< 3cm)
+    2. Gripper is aligned with pen axis (dot < -0.8, opposite direction)
+    3. Gripper is closed (gripper joints > 0.5)
+
+    This gives a large bonus for achieving proper grasp pose.
+    """
+    robot: Articulation = env.scene["robot"]
+    pen: RigidObject = env.scene["pen"]
+
+    # Get pen z-axis and cap position
+    pen_pos = pen.data.root_pos_w
+    pen_quat = pen.data.root_quat_w
+    qw, qx, qy, qz = pen_quat[:, 0], pen_quat[:, 1], pen_quat[:, 2], pen_quat[:, 3]
+    pen_z_x = 2.0 * (qx * qz + qw * qy)
+    pen_z_y = 2.0 * (qy * qz - qw * qx)
+    pen_z_z = 1.0 - 2.0 * (qx * qx + qy * qy)
+    pen_z_axis = torch.stack([pen_z_x, pen_z_y, pen_z_z], dim=-1)
+    cap_pos = pen_pos + (PEN_LENGTH / 2) * pen_z_axis
+
+    # Get grasp point and distance to cap
+    grasp_pos = get_grasp_point(robot)
+    distance_to_cap = torch.norm(grasp_pos - cap_pos, dim=-1)
+
+    # Get gripper z-axis
+    link6_quat = robot.data.body_quat_w[:, 6, :]
+    qw, qx, qy, qz = link6_quat[:, 0], link6_quat[:, 1], link6_quat[:, 2], link6_quat[:, 3]
+    gripper_z_x = 2.0 * (qx * qz + qw * qy)
+    gripper_z_y = 2.0 * (qy * qz - qw * qx)
+    gripper_z_z = 1.0 - 2.0 * (qx * qx + qy * qy)
+    gripper_z_axis = torch.stack([gripper_z_x, gripper_z_y, gripper_z_z], dim=-1)
+
+    # Check alignment (opposite direction = correct grasp)
+    dot_product = torch.sum(pen_z_axis * gripper_z_axis, dim=-1)
+
+    # Check gripper closure (joints 6-9 are gripper)
+    gripper_pos = robot.data.joint_pos[:, 6:10]
+    gripper_closed = (gripper_pos > 0.5).all(dim=-1).float()
+
+    # Success conditions
+    close_enough = (distance_to_cap < 0.03).float()  # < 3cm
+    aligned = (dot_product < -0.8).float()  # Opposite direction (correct grasp)
+
+    # Large reward when all conditions met
+    return close_enough * aligned * gripper_closed * 5.0
+
+
 ##
 # Termination Terms
 ##
 def pen_dropped_termination(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Terminate if pen falls below ground."""
+    """Terminate if pen is displaced too far from initial position.
+
+    Since kinematic_enabled=False, the pen can be knocked in any direction.
+    If pen moves more than 15cm from its initial position, episode ends.
+
+    Initial pen position: (0.5, 0.0, 0.3) with randomization ±(0.2, 0.3, 0.2)
+    """
     pen: RigidObject = env.scene["pen"]
-    pen_z = pen.data.root_pos_w[:, 2]
-    return pen_z < 0.01
+
+    # Get current pen position relative to env origin
+    pen_pos = pen.data.root_pos_w - env.scene.env_origins  # (num_envs, 3)
+
+    # Initial position center (before randomization)
+    init_pos = torch.tensor([0.5, 0.0, 0.3], device=pen_pos.device)
+
+    # Calculate displacement from initial center
+    displacement = torch.norm(pen_pos - init_pos, dim=-1)
+
+    # Terminate if displaced more than 15cm
+    # (considering randomization range, this gives some margin)
+    return displacement > 0.15
 
 
 ##
@@ -427,6 +520,7 @@ class ObservationsCfg:
         pen_orientation = ObsTerm(func=pen_orientation_obs)  # (4,) quaternion
         relative_ee_pen = ObsTerm(func=relative_ee_pen_obs)
         relative_ee_cap = ObsTerm(func=relative_ee_cap_obs)  # distance to cap (point b)
+        gripper_state = ObsTerm(func=gripper_state_obs)  # (1,) gripper open/close
 
         def __post_init__(self):
             self.enable_corruption = False
@@ -439,8 +533,10 @@ class ObservationsCfg:
 class RewardsCfg:
     """Reward specifications for the MDP."""
     distance_to_cap = RewTerm(func=distance_ee_cap_reward, weight=1.0)  # Reward for approaching cap (point b)
-    z_axis_alignment = RewTerm(func=z_axis_alignment_reward, weight=0.5)  # Reward for aligning gripper z-axis with pen
+    z_axis_alignment = RewTerm(func=z_axis_alignment_reward, weight=0.5)  # Reward for aligning gripper z-axis with pen (opposite direction)
     floor_collision = RewTerm(func=floor_collision_penalty, weight=1.0)  # Penalty for links touching floor
+    pen_displacement = RewTerm(func=pen_displacement_penalty, weight=1.0)  # Penalty for knocking pen
+    grasp_success = RewTerm(func=grasp_success_reward, weight=2.0)  # Large reward for successful grasp
     action_rate = RewTerm(func=action_rate_penalty, weight=0.1)
 
 

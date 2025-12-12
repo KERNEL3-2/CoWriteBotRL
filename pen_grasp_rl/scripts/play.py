@@ -119,19 +119,29 @@ def main():
     model_state = checkpoint["model_state_dict"]
 
     # Map weights to our simple policy
+    # Checkpoint structure: actor.0, actor.2, actor.4, actor.6 (with ELU activations in between)
+    # SimplePolicy structure: network.0 (Linear), network.1 (ELU), network.2 (Linear), network.3 (ELU), ...
     policy_state = {}
-    layer_idx = 0
-    for key, value in model_state.items():
-        if "actor" in key and "weight" in key:
-            policy_state[f"network.{layer_idx}.weight"] = value
-            layer_idx += 1
-        elif "actor" in key and "bias" in key:
-            policy_state[f"network.{layer_idx - 1}.bias"] = value
+    actor_layer_map = {
+        "actor.0.weight": "network.0.weight",
+        "actor.0.bias": "network.0.bias",
+        "actor.2.weight": "network.2.weight",
+        "actor.2.bias": "network.2.bias",
+        "actor.4.weight": "network.4.weight",
+        "actor.4.bias": "network.4.bias",
+        "actor.6.weight": "network.6.weight",
+        "actor.6.bias": "network.6.bias",
+    }
 
-    # Try to load weights, if structure doesn't match, use raw inference
+    for ckpt_key, policy_key in actor_layer_map.items():
+        if ckpt_key in model_state:
+            policy_state[policy_key] = model_state[ckpt_key]
+
+    # Try to load weights
     try:
         policy.load_state_dict(policy_state, strict=False)
         print("Loaded policy weights successfully")
+        print(f"  Loaded {len(policy_state)} actor layers")
     except Exception as e:
         print(f"Could not load exact weights: {e}")
         print("Using random policy for visualization")
@@ -192,7 +202,7 @@ def main():
             half_len = PEN_LENGTH / 2.0
             pen_axis = torch.tensor([[0.0, 0.0, 1.0]], device=pen_pos.device).expand(pen_pos.shape[0], -1)
             pen_axis_world = quat_rotate_vector(pen_quat, pen_axis)
-            cap_pos = pen_pos - pen_axis_world * half_len   # Cap (red) - grasp target
+            cap_pos = pen_pos + pen_axis_world * half_len   # Cap (red) - grasp target
 
             # Get gripper z-axis from link_6 orientation
             link6_quat = robot.data.body_quat_w[:, 6, :]  # [6] link_6 orientation

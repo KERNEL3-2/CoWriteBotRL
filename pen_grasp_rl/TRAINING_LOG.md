@@ -303,5 +303,102 @@ def z_axis_alignment_reward(env) -> torch.Tensor:
 - 접근 + 정렬 동시 학습 유도
 
 #### 다음 단계
-- [ ] 새로운 보상함수로 학습 실행
+- [x] 새로운 보상함수로 학습 실행
 - [ ] TensorBoard에서 z_axis_alignment 보상 증가 확인
+
+---
+
+### 2025-12-12 Phase 2 구현: 펜 충돌 및 그립 동작
+
+#### 50,000 iteration 학습 결과 추가 분석
+- play.py 실행 결과, 로봇이 펜 **팁** 방향으로 접근하고 있었음
+- **원인**: z_axis_alignment에서 `torch.clamp(dot_product, min=0.0)` 사용
+  - dot=+1.0 (같은 방향)일 때 보상 → 잘못된 방향
+  - 실제로는 dot=-1.0 (반대 방향)일 때 보상해야 함 (그리퍼가 캡을 마주보며 접근)
+
+#### z_axis_alignment 방향 수정
+```python
+# 이전: 같은 방향일 때 보상 (틀림)
+alignment_score = torch.clamp(dot_product, min=0.0)
+
+# 수정: 반대 방향일 때 보상 (올바름)
+alignment_score = torch.clamp(-dot_product, min=0.0)
+```
+
+#### Phase 2 변경 사항
+
+**1. 펜 모델 변경**
+- 팀원이 모델링한 pen.usd 적용 (뚜껑 없는 상태, 117mm)
+- PEN_LENGTH: 0.1207 → 0.117
+
+**2. 펜 충돌 활성화**
+```python
+# 이전: kinematic_enabled=True (고정)
+# 변경: kinematic_enabled=False (충돌 가능)
+rigid_props=sim_utils.RigidBodyPropertiesCfg(
+    disable_gravity=True,      # 공중에 떠있음
+    kinematic_enabled=False,   # 그리퍼에 맞으면 밀림
+)
+```
+
+**3. 새로운 Observation 추가**
+```python
+gripper_state = ObsTerm(func=gripper_state_obs)  # 그리퍼 열림/닫힘 상태 (0~1)
+```
+
+**4. 새로운 보상함수 추가**
+| 보상함수 | weight | 설명 |
+|---------|--------|------|
+| `pen_displacement_penalty` | 1.0 | 펜을 치면 속도에 비례한 페널티 |
+| `grasp_success_reward` | 2.0 | 3cm 이내 + 정렬 + 그리퍼 닫힘 시 큰 보상 |
+
+```python
+def pen_displacement_penalty(env) -> torch.Tensor:
+    """펜 속도에 비례한 페널티 (펜을 함부로 치지 않도록)"""
+    pen_vel = pen.data.root_lin_vel_w
+    vel_magnitude = torch.norm(pen_vel, dim=-1)
+    return -vel_magnitude * 0.5
+
+def grasp_success_reward(env) -> torch.Tensor:
+    """성공적인 그립 자세 달성 시 보상"""
+    close_enough = (distance_to_cap < 0.03).float()  # 3cm 이내
+    aligned = (dot_product < -0.8).float()           # 반대 방향 정렬
+    gripper_closed = (gripper_pos > 0.5).all().float()  # 그리퍼 닫힘
+    return close_enough * aligned * gripper_closed * 5.0
+```
+
+**5. Termination 조건 변경**
+```python
+# 이전: 펜 z < 0.01 (바닥에 떨어지면 종료)
+# 변경: 펜이 초기 위치에서 15cm 이상 이탈하면 종료
+def pen_dropped_termination(env) -> torch.Tensor:
+    pen_pos = pen.data.root_pos_w - env.scene.env_origins
+    init_pos = torch.tensor([0.5, 0.0, 0.3])
+    displacement = torch.norm(pen_pos - init_pos, dim=-1)
+    return displacement > 0.15  # 어느 방향이든 15cm 이상 밀리면 실패
+```
+
+**6. play.py cap 위치 수정**
+```python
+# 이전: cap_pos = pen_pos - pen_axis_world * half_len (틀림)
+# 수정: cap_pos = pen_pos + pen_axis_world * half_len (올바름)
+```
+
+#### 현재 보상함수 구성
+| 보상함수 | weight | 설명 |
+|---------|--------|------|
+| `distance_to_cap` | 1.0 | grasp point → 펜 캡 거리 |
+| `z_axis_alignment` | 0.5 | z축 반대 방향 정렬 (거리 가중치) |
+| `floor_collision` | 1.0 | 바닥 충돌 페널티 |
+| `pen_displacement` | 1.0 | 펜 밀림 페널티 |
+| `grasp_success` | 2.0 | 성공적 그립 보상 |
+| `action_rate` | 0.1 | 액션 크기 페널티 |
+
+#### 커리큘럼 러닝 진행 상황
+- **Phase 1**: 펜 고정 (kinematic=True), 접근+정렬 학습 → 완료
+- **Phase 2 (현재)**: 펜 충돌 활성화, 그립 동작 학습 → 준비 완료
+
+#### 다음 단계
+- [ ] Phase 2 학습 실행
+- [ ] 펜을 밀지 않고 조심스럽게 접근하는지 확인
+- [ ] grasp_success 보상이 발생하는지 확인
