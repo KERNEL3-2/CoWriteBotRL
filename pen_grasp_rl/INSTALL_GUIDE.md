@@ -166,7 +166,8 @@ cd /workspace/isaaclab
 ### 4.3 학습 실행 (컨테이너 내부)
 ```bash
 # Headless 학습 (GUI 없이)
-python pen_grasp_rl/scripts/train.py --headless --num_envs 4096 --max_iterations 3000
+# RTX 5080 (16GB VRAM) 기준 num_envs=8192 권장
+python pen_grasp_rl/scripts/train.py --headless --num_envs 8192 --max_iterations 10000
 
 # 학습 결과는 /workspace/isaaclab/logs/pen_grasp 에 저장됨
 ```
@@ -193,7 +194,7 @@ cd ~/IsaacLab
 
 # 컨테이너 내부
 cd /workspace/isaaclab
-python pen_grasp_rl/scripts/train.py --headless --num_envs 4096
+python pen_grasp_rl/scripts/train.py --headless --num_envs 8192
 ```
 
 ### 작업 끝날 때
@@ -209,19 +210,15 @@ exit  # 컨테이너에서 나가기
 GitHub에서 최신 코드를 받으려면 **호스트(Docker 밖)**에서 실행:
 
 ```bash
-# 1. COBOT_WRITER 폴더에서 git pull
-cd ~/COBOT_WRITER
+# 1. CoWriteBotRL 폴더에서 git pull
+cd ~/CoWriteBotRL
 git pull
 
-# 2. __pycache__ 삭제 (권한 문제 방지)
-sudo rm -rf ~/IsaacLab/pen_grasp_rl/envs/__pycache__
-sudo rm -rf ~/IsaacLab/pen_grasp_rl/scripts/__pycache__
+# 2. 업데이트된 파일 복사
+cp -r ~/CoWriteBotRL/pen_grasp_rl ~/IsaacLab/
+cp -r ~/CoWriteBotRL/e0509_gripper_isaac ~/
 
-# 3. 업데이트된 파일 복사
-cp -r ~/COBOT_WRITER/pen_grasp_rl ~/IsaacLab/
-cp -r ~/COBOT_WRITER/e0509_gripper_isaac ~/
-
-# 4. 확인
+# 3. 확인
 ls -la ~/IsaacLab/pen_grasp_rl/models/first_control.usd
 ```
 
@@ -377,7 +374,7 @@ docker logout nvcr.io
 - [ ] NVIDIA Container Toolkit 설치
 - [ ] NGC 로그인 (`docker login nvcr.io`)
 - [ ] Isaac Lab 클론 (`git clone https://github.com/isaac-sim/IsaacLab.git`)
-- [ ] 팀 프로젝트 클론 (`git clone https://github.com/KERNEL3-2/COBOT_WRITER.git`)
+- [ ] 팀 프로젝트 클론 (`git clone https://github.com/KERNEL3-2/CoWriteBotRL.git`)
 - [ ] pen_grasp_rl 폴더를 IsaacLab 안으로 복사
 - [ ] e0509_gripper_isaac 폴더를 홈 디렉토리로 복사
 - [ ] docker-compose.yaml에 볼륨 마운트 추가 (pen_grasp_rl, logs, e0509_gripper_isaac)
