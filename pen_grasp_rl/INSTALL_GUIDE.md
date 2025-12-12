@@ -214,9 +214,9 @@ GitHub에서 최신 코드를 받으려면 **호스트(Docker 밖)**에서 실�
 cd ~/CoWriteBotRL
 git pull
 
-# 2. 업데이트된 파일 복사
-cp -r ~/CoWriteBotRL/pen_grasp_rl ~/IsaacLab/
-cp -r ~/CoWriteBotRL/e0509_gripper_isaac ~/
+# 2. 업데이트된 파일 복사 (Docker가 root 소유권으로 만들어서 sudo 필요)
+sudo cp -r ~/CoWriteBotRL/pen_grasp_rl ~/IsaacLab/
+sudo cp -r ~/CoWriteBotRL/e0509_gripper_isaac ~/
 
 # 3. 확인
 ls -la ~/IsaacLab/pen_grasp_rl/models/first_control.usd
