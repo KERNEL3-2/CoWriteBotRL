@@ -11,6 +11,9 @@ RSL-RL 라이브러리의 PPO 알고리즘을 사용합니다.
     # GUI 모드로 실행 (디버깅용)
     python train.py --num_envs 16 --max_iterations 100
 
+    # 이전 학습 이어서 하기 (resume)
+    python train.py --headless --num_envs 4096 --resume --checkpoint /path/to/model_3500.pt
+
 주의:
     - 학습은 별도 터미널에서 실행해야 합니다 (Claude 터미널은 타임아웃 있음)
     - GPU 메모리에 따라 num_envs 조절 필요
@@ -32,6 +35,10 @@ parser.add_argument("--num_envs", type=int, default=4096,
                     help="병렬 환경 개수 (기본: 4096)")
 parser.add_argument("--max_iterations", type=int, default=3000,
                     help="최대 학습 반복 횟수 (기본: 3000)")
+parser.add_argument("--resume", action="store_true",
+                    help="이전 학습 이어서 하기")
+parser.add_argument("--checkpoint", type=str, default=None,
+                    help="이어서 학습할 체크포인트 파일 경로 (예: model_3500.pt)")
 
 # AppLauncher 인자 추가 (--headless 등)
 AppLauncher.add_app_launcher_args(parser)
@@ -130,17 +137,39 @@ def main():
         device=agent_cfg.device
     )
 
+    # 체크포인트에서 이어서 학습하기
+    resume_iteration = 0
+    if args.resume and args.checkpoint:
+        if os.path.exists(args.checkpoint):
+            print(f"체크포인트 로드 중: {args.checkpoint}")
+            runner.load(args.checkpoint)
+            # 파일명에서 iteration 번호 추출 (예: model_3500.pt -> 3500)
+            checkpoint_name = os.path.basename(args.checkpoint)
+            try:
+                resume_iteration = int(checkpoint_name.replace("model_", "").replace(".pt", ""))
+                print(f"  이전 학습 iteration: {resume_iteration}")
+            except ValueError:
+                print("  경고: iteration 번호를 추출할 수 없습니다. 0부터 시작합니다.")
+        else:
+            print(f"경고: 체크포인트 파일을 찾을 수 없습니다: {args.checkpoint}")
+            print("새로운 학습을 시작합니다.")
+
     # 학습 시작
     print("=" * 60)
-    print("펜 잡기 강화학습 시작")
+    if args.resume and resume_iteration > 0:
+        print(f"펜 잡기 강화학습 재개 (iteration {resume_iteration}부터)")
+    else:
+        print("펜 잡기 강화학습 시작")
     print("=" * 60)
     print(f"  병렬 환경 수: {args.num_envs}")
     print(f"  최대 반복 횟수: {args.max_iterations}")
     print(f"  초기 노이즈 std: {agent_cfg.policy.init_noise_std}")
     print(f"  학습률: {agent_cfg.algorithm.learning_rate}")
+    if args.resume:
+        print(f"  체크포인트: {args.checkpoint}")
     print("=" * 60)
 
-    runner.learn(num_learning_iterations=args.max_iterations)
+    runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=not args.resume)
 
     # ============================================================
     # 학습 완료 및 정리
