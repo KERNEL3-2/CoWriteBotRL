@@ -53,6 +53,7 @@ ros2 launch e0509_gripper_description bringup.launch.py mode:=virtual
 ```
 
 **터미널 2: ROS2 Bridge** (e0509_gripper_description 패키지)
+[e0509_gripper_description](https://github.com/fhekwn549/e0509_gripper_description)
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/doosan_ws/install/setup.bash
