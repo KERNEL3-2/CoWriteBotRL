@@ -729,6 +729,61 @@ python pen_grasp_rl/scripts/train.py --headless --num_envs 4096 --max_iterations
 ```
 
 #### 다음 단계
-- [ ] 현재 설정으로 학습 진행
+- [x] 현재 설정으로 학습 진행
 - [ ] 학습 성공 시 펜 각도 랜덤화 추가 (±30도부터 시작)
 - [ ] 그리퍼 잡기 동작 추가
+
+---
+
+### 2025-12-15 10,000 iteration 학습 분석 및 z축 정렬 버그 수정
+
+#### 학습 결과 분석 (10,000 iteration)
+
+**로그 위치**: `/home/fhekwn549/pen_grasp/`
+
+| 지표 | 초기 | 최종 | 상태 |
+|------|------|------|------|
+| distance_to_cap | 0.004 | 0.752 | 학습됨 (약 2.9cm 거리) |
+| z_axis_alignment | 0.0 | **0.0** | 전혀 학습 안됨 |
+| floor_collision | -0.68 | 0.0 | 해결됨 |
+| mean_episode_length | 22 | 300 | 최대 길이까지 생존 |
+| mean_reward | -6.57 | 7.41 | 증가 |
+
+#### 문제 발견: z_axis_alignment가 항상 0인 이유
+
+**play.py로 시각적 확인 결과:**
+1. Blue 점들 (pen z-axis): 펜 중심에서 **캡 방향**으로 뻗어나감 (+Z)
+2. Yellow 점들 (gripper z-axis): 그리퍼 안쪽에서 **손가락이 뻗어나가는 방향**
+
+**결론:**
+- 펜 +Z: 캡 방향 (위로 향함)
+- 그리퍼 +Z: 손가락 끝 방향 (아래로 향해야 캡 잡기 가능)
+- 따라서 **dot product = -1** 일 때 올바른 정렬
+
+**기존 코드 버그:**
+```python
+# 이전 (잘못됨): dot > 0.9 일 때 보상 → 절대 달성 불가
+alignment_reward = torch.clamp(dot_product - 0.9, min=0.0) * 10.0
+```
+
+#### 수정 사항
+
+**1. z_axis_alignment_reward 방향 수정 (`pen_grasp_env.py`)**
+```python
+# 수정 (올바름): dot < -0.9 일 때 보상 (반대 방향)
+alignment_reward = torch.clamp(-dot_product - 0.9, min=0.0) * 10.0
+```
+
+**2. play.py cap 마커 위치 수정**
+```python
+# 이전 (잘못됨)
+cap_pos = pen_pos - pen_axis_world * half_len
+
+# 수정 (올바름): pen +Z 방향이 캡
+cap_pos = pen_pos + pen_axis_world * half_len
+```
+
+#### 다음 단계
+- [ ] 수정된 보상함수로 학습 재개 (resume)
+- [ ] TensorBoard에서 z_axis_alignment 보상 증가 확인
+- [ ] 그리퍼가 위에서 캡을 향해 내려오는지 play.py로 확인

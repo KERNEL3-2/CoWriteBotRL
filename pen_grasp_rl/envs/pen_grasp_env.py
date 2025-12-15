@@ -575,12 +575,14 @@ def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
 
     # --- 정렬 계산 ---
     # dot product: +1 = 같은 방향, -1 = 반대 방향, 0 = 수직
+    # 그리퍼가 위에서 캡을 잡으려면 dot = -1 이어야 함
     dot_product = torch.sum(pen_z_axis * gripper_z_axis, dim=-1)
 
-    # dot > 0.9 일 때만 보상 (0.9~1.0 → 0~1)
-    alignment_reward = torch.clamp(dot_product - 0.9, min=0.0) * 10.0
+    # dot < -0.9 일 때만 보상 (반대 방향일 때)
+    # -dot_product를 사용하여 dot=-1일 때 최대 보상
+    alignment_reward = torch.clamp(-dot_product - 0.9, min=0.0) * 10.0
 
-    # 10cm 이내일 때만 적용 (기존 5cm에서 확장)
+    # 10cm 이내일 때만 적용
     distance_factor = torch.clamp(1.0 - distance_to_cap / 0.10, min=0.0)
 
     return alignment_reward * distance_factor
