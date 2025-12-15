@@ -95,81 +95,43 @@ class BestModelRunner(OnPolicyRunner):
         self.best_reward = float('-inf')  # 역대 최고 리워드
         self.best_iteration = 0           # 최고 리워드 달성 이터레이션
 
+    def _post_iteration_callback(self, it: int, mean_reward: float):
+        """
+        이터레이션 후 콜백: Best Model 저장
+
+        Args:
+            it: 현재 이터레이션
+            mean_reward: 평균 리워드
+        """
+        if mean_reward > self.best_reward:
+            self.best_reward = mean_reward
+            self.best_iteration = it
+            self.save("best_model")
+            print(f"[Best Model] Iteration {it}: reward = {mean_reward:.4f} (saved!)")
+
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):
         """
         학습 실행 (Best Model 저장 기능 포함)
 
-        부모 클래스의 learn()을 한 이터레이션씩 실행하면서
-        best model을 추적합니다.
+        부모 클래스의 learn()을 호출하고, 매 이터레이션마다 best model을 체크합니다.
         """
-        # 초기화
-        self.alg.init_storage(
-            self.env.num_envs,
-            num_learning_iterations,
-            [self.env.num_obs],
-            [self.env.num_privileged_obs] if self.env.num_privileged_obs is not None else [0],
-            [self.env.num_actions],
-        )
+        # 원래 learn() 호출 전에 콜백 설정
+        original_log = self.log
 
-        obs, _ = self.env.get_observations()
-        critic_obs = obs
-        obs, critic_obs = obs.to(self.device), critic_obs.to(self.device)
-        self.alg.actor_critic.train()
+        def log_with_best_model(locs):
+            # 원래 로깅 수행
+            original_log(locs)
 
-        ep_infos = []
-        rewbuffer = []
-        lenbuffer = []
-        cur_reward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
-        cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
+            # Best model 체크
+            if 'mean_reward' in locs and locs.get('it') is not None:
+                self._post_iteration_callback(locs['it'], locs['mean_reward'])
 
-        # 메인 학습 루프
-        for it in range(num_learning_iterations):
-            # 데이터 수집
-            for _ in range(self.num_steps_per_env):
-                actions = self.alg.act(obs, critic_obs)
-                obs, rewards, dones, infos = self.env.step(actions)
-                critic_obs = obs
-                obs, critic_obs, rewards, dones = (
-                    obs.to(self.device),
-                    critic_obs.to(self.device),
-                    rewards.to(self.device),
-                    dones.to(self.device),
-                )
-                self.alg.process_env_step(rewards, dones, infos)
+        self.log = log_with_best_model
 
-                # 에피소드 통계
-                cur_reward_sum += rewards
-                cur_episode_length += 1
-                new_ids = (dones > 0).nonzero(as_tuple=False)
-                rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
-                lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
-                cur_reward_sum[new_ids] = 0
-                cur_episode_length[new_ids] = 0
+        # 부모 클래스의 learn() 호출
+        super().learn(num_learning_iterations, init_at_random_ep_len)
 
-            # PPO 업데이트
-            mean_value_loss, mean_surrogate_loss = self.alg.update()
-
-            # 평균 리워드 계산
-            if len(rewbuffer) > 0:
-                mean_reward = sum(rewbuffer[-100:]) / len(rewbuffer[-100:])
-
-                # Best Model 체크 및 저장
-                if mean_reward > self.best_reward:
-                    self.best_reward = mean_reward
-                    self.best_iteration = it
-                    self.save("best_model")
-                    print(f"[Best Model] Iteration {it}: reward = {mean_reward:.4f} (saved!)")
-
-            # 로깅
-            self.log(locals())
-
-            # 주기적 체크포인트 저장
-            if it % self.save_interval == 0:
-                self.save(f"model_{it}")
-
-        # 최종 모델 저장
-        self.save(f"model_{num_learning_iterations}")
-
+        # 학습 완료 후 best model 정보 출력
         print(f"\n{'='*50}")
         print(f"Best Model: iteration {self.best_iteration}, reward = {self.best_reward:.4f}")
         print(f"{'='*50}")
