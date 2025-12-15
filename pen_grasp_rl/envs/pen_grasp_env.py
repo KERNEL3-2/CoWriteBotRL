@@ -175,7 +175,7 @@ class PenGraspSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.UsdFileCfg(
             usd_path=PEN_USD_PATH,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=True,     # 중력 비활성화 (공중에 고정)
+                disable_gravity=False,    # 중력 활성화 (떨어질 수 있음)
                 kinematic_enabled=False,  # 물리 충돌 활성화 (그리퍼가 밀 수 있음)
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=PEN_MASS),  # 16.3g
@@ -192,23 +192,22 @@ class PenGraspSceneCfg(InteractiveSceneCfg):
 # #############################################################################
 #                         2. 행동 정의 (Action Term)
 # #############################################################################
-class ArmGripperActionTerm(ActionTerm):
+class ArmActionTerm(ActionTerm):
     """
-    팔 + 그리퍼 통합 행동 제어
+    팔 전용 행동 제어 (그리퍼 제외)
 
-    이 클래스는 강화학습 에이전트의 행동을 로봇 관절 명령으로 변환합니다.
+    이 클래스는 강화학습 에이전트의 행동을 로봇 팔 관절 명령으로 변환합니다.
+    그리퍼는 항상 열린 상태로 고정됩니다.
 
-    === 행동 공간 (7차원) ===
+    === 행동 공간 (6차원) ===
     - [0:6] 팔 관절 델타 위치 (현재 위치에서의 변화량)
-    - [6] 그리퍼 명령 (0=열림, 1=닫힘)
 
     === 관절 매핑 ===
     - 인덱스 0-5: joint_1 ~ joint_6 (팔)
-    - 인덱스 6-9: gripper_rh_r1, r2, l1, l2 (그리퍼, 모두 동일 값)
+    - 인덱스 6-9: gripper_rh_r1, r2, l1, l2 (그리퍼, 항상 0 = 열림)
 
-    === 그리퍼 미믹(Mimic) ===
-    그리퍼의 4개 관절은 모두 같은 값을 받습니다 (단일 명령 → 4개 관절).
-    이를 통해 행동 공간을 10차원 → 7차원으로 줄입니다.
+    === 학습 목표 ===
+    위치 접근 + 축 정렬만 학습하고, 잡기는 실제 로봇에서 수행합니다.
     """
 
     _asset: Articulation  # 제어할 로봇 에셋
@@ -218,21 +217,20 @@ class ArmGripperActionTerm(ActionTerm):
         super().__init__(cfg, env)
 
         # 내부 버퍼 초기화
-        # raw_actions: 에이전트에서 받은 원본 행동 (7차원)
-        self._raw_actions = torch.zeros(env.num_envs, 7, device=self.device)
+        # raw_actions: 에이전트에서 받은 원본 행동 (6차원)
+        self._raw_actions = torch.zeros(env.num_envs, 6, device=self.device)
         # processed_actions: 처리된 행동 (현재는 동일)
-        self._processed_actions = torch.zeros(env.num_envs, 7, device=self.device)
+        self._processed_actions = torch.zeros(env.num_envs, 6, device=self.device)
         # joint_pos_target: 실제 관절 타겟 (10차원: 6 팔 + 4 그리퍼)
         self._joint_pos_target = torch.zeros(env.num_envs, 10, device=self.device)
 
         # 행동 스케일 설정
-        self.arm_scale = 0.1     # 팔 행동 스케일 (작은 움직임으로 안정적 학습)
-        self.gripper_scale = 1.0  # 그리퍼 스케일 (0~1 범위 그대로 사용)
+        self.arm_scale = 0.1  # 팔 행동 스케일 (작은 움직임으로 안정적 학습)
 
     @property
     def action_dim(self) -> int:
-        """행동 차원: 6 팔 + 1 그리퍼 = 7"""
-        return 7
+        """행동 차원: 6 (팔만)"""
+        return 6
 
     @property
     def raw_actions(self) -> torch.Tensor:
@@ -249,7 +247,7 @@ class ArmGripperActionTerm(ActionTerm):
         에이전트 행동 저장
 
         Args:
-            actions: (num_envs, 7) 형태의 행동 텐서
+            actions: (num_envs, 6) 형태의 행동 텐서
         """
         self._raw_actions[:] = actions
         self._processed_actions[:] = actions
@@ -259,7 +257,7 @@ class ArmGripperActionTerm(ActionTerm):
         행동을 로봇 관절 명령으로 변환 및 적용
 
         1. 팔 관절: 현재 위치 + (행동 * 스케일) = 델타 위치 제어
-        2. 그리퍼: 단일 명령을 4개 관절에 복사 (미믹)
+        2. 그리퍼: 항상 열린 상태 (0) 유지
         """
         # 현재 관절 위치 가져오기
         current_pos = self._asset.data.joint_pos
@@ -269,19 +267,18 @@ class ArmGripperActionTerm(ActionTerm):
         arm_delta = self._processed_actions[:, :6] * self.arm_scale
         self._joint_pos_target[:, :6] = current_pos[:, :6] + arm_delta
 
-        # --- 그리퍼 제어 (미믹) ---
-        # 단일 그리퍼 명령(인덱스 6)을 4개 관절(인덱스 6-9)에 복사
-        gripper_cmd = self._processed_actions[:, 6:7] * self.gripper_scale
-        self._joint_pos_target[:, 6:10] = gripper_cmd.repeat(1, 4)
+        # --- 그리퍼 고정 (항상 열림) ---
+        # 그리퍼 관절(인덱스 6-9)을 0으로 고정 (열린 상태)
+        self._joint_pos_target[:, 6:10] = 0.0
 
         # 로봇에 관절 위치 타겟 적용
         self._asset.set_joint_position_target(self._joint_pos_target)
 
 
 @configclass
-class ArmGripperActionTermCfg(ActionTermCfg):
-    """팔 + 그리퍼 행동 설정 클래스"""
-    class_type: type = ArmGripperActionTerm
+class ArmActionTermCfg(ActionTermCfg):
+    """팔 전용 행동 설정 클래스 (그리퍼 제외)"""
+    class_type: type = ArmActionTerm
 
 
 # #############################################################################
@@ -394,22 +391,6 @@ def pen_orientation_obs(env: ManagerBasedRLEnv) -> torch.Tensor:
     """
     pen: RigidObject = env.scene["pen"]
     return pen.data.root_quat_w
-
-
-def gripper_state_obs(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """
-    그리퍼 열림/닫힘 상태
-
-    4개 그리퍼 관절의 평균값으로 상태를 나타냅니다.
-    - 0에 가까움: 그리퍼 열림
-    - 1에 가까움: 그리퍼 닫힘
-
-    Returns:
-        (num_envs, 1) - 그리퍼 상태 값
-    """
-    robot: Articulation = env.scene["robot"]
-    gripper_pos = robot.data.joint_pos[:, 6:10]  # 인덱스 6-9가 그리퍼
-    return gripper_pos.mean(dim=-1, keepdim=True)
 
 
 def pen_cap_pos_obs(env: ManagerBasedRLEnv) -> torch.Tensor:
@@ -628,15 +609,15 @@ def pen_displacement_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
     return -vel_magnitude * 0.5
 
 
-def grasp_success_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
+def alignment_success_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     """
-    잡기 성공 보상 (큰 보너스)
+    위치+정렬 성공 보상 (큰 보너스)
 
     === 성공 조건 (모두 충족 시) ===
     1. 그리퍼가 펜 캡에 가까움 (< 3cm)
     2. 그리퍼 Z축이 펜 Z축과 반대 방향 (dot < -0.8)
-    3. 그리퍼가 닫힘 (관절 값 > 0.5)
 
+    그리퍼 잡기는 실제 로봇에서 수행하므로 학습에서 제외합니다.
     모든 조건 충족 시 5.0 보상 (가중치 2.0 적용 시 실제 10.0)
 
     Returns:
@@ -668,47 +649,35 @@ def grasp_success_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     gripper_z_axis = torch.stack([gripper_z_x, gripper_z_y, gripper_z_z], dim=-1)
     dot_product = torch.sum(pen_z_axis * gripper_z_axis, dim=-1)
 
-    # --- 그리퍼 닫힘 조건 ---
-    gripper_pos = robot.data.joint_pos[:, 6:10]
-    gripper_closed = (gripper_pos > 0.5).all(dim=-1).float()
-
     # --- 성공 조건 결합 ---
     close_enough = (distance_to_cap < 0.03).float()  # 3cm 이내
     aligned = (dot_product < -0.8).float()           # 반대 방향 정렬
 
-    # 모든 조건 충족 시 큰 보상
-    return close_enough * aligned * gripper_closed * 5.0
+    # 위치 + 정렬 조건 충족 시 큰 보상
+    return close_enough * aligned * 5.0
 
 
 # #############################################################################
 #                         5. 종료 조건 (Termination Terms)
 # #############################################################################
 
-def pen_dropped_termination(env: ManagerBasedRLEnv) -> torch.Tensor:
+def pen_fell_termination(env: ManagerBasedRLEnv) -> torch.Tensor:
     """
-    펜 이탈 종료 조건
+    펜 낙하 종료 조건
 
-    펜이 초기 위치에서 15cm 이상 벗어나면 에피소드를 종료합니다.
-    펜을 제대로 잡지 않고 밀어버리는 행동을 조기 종료합니다.
-
-    초기 위치: (0.5, 0.0, 0.3) ± 랜덤화
+    펜이 바닥 근처(5cm 이하)로 떨어지면 에피소드를 종료합니다.
+    중력이 켜져 있으므로 로봇이 펜을 치면 떨어집니다.
 
     Returns:
         (num_envs,) - True/False 종료 여부
     """
     pen: RigidObject = env.scene["pen"]
 
-    # 환경 원점 기준 펜 위치
-    pen_pos = pen_pos = pen.data.root_pos_w - env.scene.env_origins
+    # 펜의 월드 좌표 z값 (높이)
+    pen_z = pen.data.root_pos_w[:, 2]
 
-    # 초기 위치 중심
-    init_pos = torch.tensor([0.5, 0.0, 0.3], device=pen_pos.device)
-
-    # 이동 거리 계산
-    displacement = torch.norm(pen_pos - init_pos, dim=-1)
-
-    # 15cm 초과 시 종료
-    return displacement > 0.15
+    # 5cm 이하로 떨어지면 종료
+    return pen_z < 0.05
 
 
 # #############################################################################
@@ -720,9 +689,9 @@ class ActionsCfg:
     """
     행동 설정
 
-    arm_gripper: 7차원 행동 (6 팔 + 1 그리퍼)
+    arm: 6차원 행동 (팔만, 그리퍼는 열린 상태 고정)
     """
-    arm_gripper = ArmGripperActionTermCfg(asset_name="robot")
+    arm = ArmActionTermCfg(asset_name="robot")
 
 
 @configclass
@@ -730,7 +699,7 @@ class ObservationsCfg:
     """
     관찰 설정
 
-    === 관찰 공간 (총 35차원) ===
+    === 관찰 공간 (총 36차원) ===
     - joint_pos: (10) 관절 위치
     - joint_vel: (10) 관절 속도
     - ee_pos: (3) 그리퍼 위치
@@ -738,7 +707,8 @@ class ObservationsCfg:
     - pen_orientation: (4) 펜 방향 (쿼터니언)
     - relative_ee_pen: (3) 그리퍼→펜 상대 위치
     - relative_ee_cap: (3) 그리퍼→캡 상대 위치
-    - gripper_state: (1) 그리퍼 상태
+
+    그리퍼 상태는 항상 열린 상태로 고정되므로 관찰에서 제외합니다.
     """
 
     @configclass
@@ -758,9 +728,6 @@ class ObservationsCfg:
         relative_ee_pen = ObsTerm(func=relative_ee_pen_obs)
         relative_ee_cap = ObsTerm(func=relative_ee_cap_obs)  # 캡까지 거리
 
-        # 그리퍼 상태
-        gripper_state = ObsTerm(func=gripper_state_obs)  # (1,) 열림/닫힘
-
         def __post_init__(self):
             self.enable_corruption = False   # 노이즈 없음
             self.concatenate_terms = True    # 모든 관찰을 하나의 텐서로 연결
@@ -777,7 +744,7 @@ class RewardsCfg:
     양수 보상 (목표 행동 유도):
     - distance_to_cap (w=1.0): 캡에 가까워지기
     - z_axis_alignment (w=0.5): 축 정렬
-    - grasp_success (w=2.0): 잡기 성공 (5.0 * 2.0 = 10.0)
+    - alignment_success (w=2.0): 위치+정렬 성공 (5.0 * 2.0 = 10.0)
 
     음수 보상 (나쁜 행동 억제):
     - floor_collision (w=1.0): 바닥 충돌
@@ -788,7 +755,7 @@ class RewardsCfg:
     z_axis_alignment = RewTerm(func=z_axis_alignment_reward, weight=0.5)
     floor_collision = RewTerm(func=floor_collision_penalty, weight=1.0)
     pen_displacement = RewTerm(func=pen_displacement_penalty, weight=1.0)
-    grasp_success = RewTerm(func=grasp_success_reward, weight=2.0)
+    alignment_success = RewTerm(func=alignment_success_reward, weight=2.0)
     action_rate = RewTerm(func=action_rate_penalty, weight=0.1)
 
 
@@ -798,10 +765,10 @@ class TerminationsCfg:
     종료 조건 설정
 
     - time_out: 에피소드 시간 초과 (10초)
-    - pen_dropped: 펜이 15cm 이상 이동
+    - pen_fell: 펜이 바닥으로 떨어짐 (z < 5cm)
     """
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    pen_dropped = DoneTerm(func=pen_dropped_termination)
+    pen_fell = DoneTerm(func=pen_fell_termination)
 
 
 @configclass

@@ -504,5 +504,128 @@ PEN_LENGTH = 0.1207  # 120.7mm (이전: 117mm)
 - 보상함수 목표 위치 (뒷캡) 확인 ✓
 
 #### 다음 단계
-- [ ] 새 모델로 Phase 2 학습 실행
+- [x] 새 모델로 Phase 2 학습 실행
 - [ ] 정밀 펜 모델에서 그립 동작 확인
+
+---
+
+### 2025-12-15 주말 학습 결과 분석 및 환경 대폭 수정
+
+#### 학습 결과 (2025-12-12 ~ 2025-12-15, 약 200K iteration)
+
+**로그 위치**: `/home/fhekwn549/pen_grasp_logs/pen_grasp/2025-12-12_11-38-23`
+
+| 지표 | 시작 | 최종 | 비고 |
+|------|------|------|------|
+| Mean Reward | 0.05 | -1,600 | 발산 |
+| Episode Length | 5.1 | 2.0 | 거의 즉시 종료 |
+| action_rate | -0.00 | -27,793 | 폭발 |
+| Value Loss | 0.01 | 12.4T | 완전 발산 |
+| pen_dropped | - | 99.9% | 펜 항상 밀림 |
+
+#### 문제 원인 분석
+
+**1. 충돌 + 종료 조건의 악순환**
+```
+로봇 접근 → 펜 충돌 → 펜 15cm 이동 → 에피소드 즉시 종료
+→ 학습할 시간 없음 → 정책 혼란 → 행동 값 폭발 → 완전 발산
+```
+
+**2. 시간대별 발산 추이**
+| Step | Mean Reward | action_rate | Value Loss |
+|------|-------------|-------------|------------|
+| 0 | 0.05 | -0.00 | 0.01 |
+| 10K | 0.52 | -0.02 | 0.02 |
+| **50K** | **-21,032** | **-3,009** | **5.9B** |
+| 150K | -3,873,878 | - | - |
+| 200K | -1,600 | -27,793 | 12.4T |
+
+Step 50K 부근에서 급격히 발산 시작.
+
+#### 환경 대폭 수정
+
+**1. 펜 물리 설정 변경**
+```python
+# 이전: 중력 없음 (공중에 고정)
+disable_gravity=True
+
+# 변경: 중력 있음 (떨어질 수 있음)
+disable_gravity=False
+```
+
+**2. 종료 조건 변경**
+```python
+# 이전: 펜이 15cm 이상 밀리면 종료 (너무 민감)
+def pen_dropped_termination(env):
+    displacement = torch.norm(pen_pos - init_pos, dim=-1)
+    return displacement > 0.15
+
+# 변경: 펜이 바닥으로 떨어지면 종료 (현실적)
+def pen_fell_termination(env):
+    pen_z = pen.data.root_pos_w[:, 2]
+    return pen_z < 0.05  # 5cm 이하
+```
+
+**3. 행동 공간 단순화 (7차원 → 6차원)**
+```python
+# 이전: 팔 6 + 그리퍼 1 = 7차원
+class ArmGripperActionTerm:
+    action_dim = 7
+    # 그리퍼 제어 포함
+
+# 변경: 팔만 6차원, 그리퍼 열린 상태 고정
+class ArmActionTerm:
+    action_dim = 6
+    # 그리퍼 항상 0 (열림)
+```
+
+**4. 보상 함수 수정**
+```python
+# 이전: grasp_success (위치 + 정렬 + 그리퍼 닫힘)
+grasp_success = RewTerm(func=grasp_success_reward, weight=2.0)
+
+# 변경: alignment_success (위치 + 정렬만)
+alignment_success = RewTerm(func=alignment_success_reward, weight=2.0)
+```
+
+**5. 관찰 공간 수정 (36차원 → 36차원, gripper_state 제거)**
+```python
+# 제거: gripper_state (1차원)
+# 그리퍼가 항상 열려 있으므로 불필요
+```
+
+#### 수정 근거
+
+| 기존 문제 | 해결책 | 이유 |
+|----------|--------|------|
+| 펜 밀리면 즉시 종료 | 떨어지면 종료 | 학습 시간 확보 |
+| 펜이 우주로 날아감 | 중력 활성화 | 현실적 물리 |
+| 그리퍼 학습 불필요 | 그리퍼 제거 | 위치+정렬만 학습 |
+| 복잡한 성공 조건 | 그리퍼 조건 제거 | 학습 목표 단순화 |
+
+#### 학습 목표 재정의
+
+**Phase 1 (현재)**
+- 목표: 그리퍼를 펜 캡 위치로 이동 + Z축 정렬
+- 그리퍼: 항상 열린 상태
+- 잡기: 학습하지 않음 (실제 로봇에서 수행)
+
+**Phase 2 (추후)**
+- Phase 1 학습된 정책 기반
+- 그리퍼 닫기 동작 추가
+- 또는 실제 로봇에서 단순 오므리기로 해결
+
+#### 현재 보상 함수 구성
+| 보상함수 | weight | 설명 |
+|---------|--------|------|
+| `distance_to_cap` | 1.0 | grasp point → 펜 캡 거리 |
+| `z_axis_alignment` | 0.5 | z축 반대 방향 정렬 |
+| `floor_collision` | 1.0 | 바닥 충돌 페널티 |
+| `pen_displacement` | 1.0 | 펜 밀림 페널티 |
+| `alignment_success` | 2.0 | 위치+정렬 성공 보상 |
+| `action_rate` | 0.1 | 액션 크기 페널티 |
+
+#### 다음 단계
+- [ ] 수정된 환경으로 학습 실행
+- [ ] pen_fell 종료 비율 모니터링
+- [ ] alignment_success 보상 발생 확인
