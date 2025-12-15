@@ -626,6 +626,36 @@ alignment_success = RewTerm(func=alignment_success_reward, weight=2.0)
 | `action_rate` | 0.1 | 액션 크기 페널티 |
 
 #### 다음 단계
-- [ ] 수정된 환경으로 학습 실행
-- [ ] pen_fell 종료 비율 모니터링
+- [x] 수정된 환경으로 학습 실행
+- [x] pen_fell 종료 비율 모니터링
+
+---
+
+### 2025-12-15 중력 설정 재수정
+
+#### 문제 발생
+- pen_fell 종료 비율이 99.9%로 나옴
+- 원인: 펜이 공중(z=0.3m)에서 스폰 → 중력으로 바로 떨어짐 → 즉시 종료
+- 로봇이 뭔가 하기도 전에 에피소드 종료
+
+#### 해결책: 중력 다시 비활성화
+```python
+# 변경: 중력 끄기 (펜 공중 고정)
+disable_gravity=True
+
+# 종료 조건: time_out만 (pen_fell 제거)
+time_out = DoneTerm(func=mdp.time_out, time_out=True)
+```
+
+#### 현재 설정 요약
+| 항목 | 설정 |
+|------|------|
+| 펜 중력 | 비활성화 (공중 고정) |
+| 펜 충돌 | 활성화 (그리퍼가 밀 수 있음) |
+| 종료 조건 | time_out만 (10초) |
+| 학습 목표 | 접근 + 정렬 (pen_displacement 페널티로 밀기 억제) |
+
+#### 다음 단계
+- [ ] 수정된 환경으로 학습 재실행
+- [ ] 발산 여부 확인 (action_rate, value_loss)
 - [ ] alignment_success 보상 발생 확인

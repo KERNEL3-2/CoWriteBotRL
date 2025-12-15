@@ -175,7 +175,7 @@ class PenGraspSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.UsdFileCfg(
             usd_path=PEN_USD_PATH,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=False,    # 중력 활성화 (떨어질 수 있음)
+                disable_gravity=True,     # 중력 비활성화 (공중에 고정)
                 kinematic_enabled=False,  # 물리 충돌 활성화 (그리퍼가 밀 수 있음)
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=PEN_MASS),  # 16.3g
@@ -765,10 +765,11 @@ class TerminationsCfg:
     종료 조건 설정
 
     - time_out: 에피소드 시간 초과 (10초)
-    - pen_fell: 펜이 바닥으로 떨어짐 (z < 5cm)
+
+    펜은 중력이 꺼져 있어 떨어지지 않음.
+    그리퍼가 펜을 밀면 pen_displacement 페널티로 학습.
     """
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    pen_fell = DoneTerm(func=pen_fell_termination)
 
 
 @configclass
