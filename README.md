@@ -30,17 +30,37 @@ CoWriteBotRL/
 ## 사용법
 
 ### 학습
+
+**기본 실행**
 ```bash
 source ~/isaacsim_env/bin/activate
 cd ~/CoWriteBotRL
-python pen_grasp_rl/scripts/train.py
+python pen_grasp_rl/scripts/train.py --headless --num_envs 4096 --max_iterations 5000
 ```
+
+**옵션**
+| 옵션 | 설명 | 기본값 |
+|------|------|--------|
+| `--headless` | GUI 없이 실행 | - |
+| `--num_envs` | 병렬 환경 수 | 4096 |
+| `--max_iterations` | 학습 반복 횟수 | 3000 |
+| `--resume` | 이전 학습 이어서 하기 | - |
+| `--checkpoint` | 체크포인트 파일 경로 | - |
+
+**이전 학습 이어서 하기 (Resume)**
+```bash
+python pen_grasp_rl/scripts/train.py --headless --num_envs 4096 --max_iterations 1500 \
+    --resume --checkpoint ./logs/pen_grasp/model_3500.pt
+```
+
+> 참고: `--max_iterations`는 이번 실행에서 추가로 학습할 횟수입니다.
+> 예: 3500에서 resume + 1500 iterations = 총 5000 iterations
 
 ### 체크포인트 테스트
 ```bash
 source ~/isaacsim_env/bin/activate
 cd ~/CoWriteBotRL
-python pen_grasp_rl/scripts/play.py --checkpoint <checkpoint_path>
+python pen_grasp_rl/scripts/play.py --checkpoint ./logs/pen_grasp/model_3500.pt
 ```
 
 ### Digital Twin (실제 로봇 시각화)
