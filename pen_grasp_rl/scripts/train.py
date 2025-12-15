@@ -82,6 +82,99 @@ from isaaclab_rl.rsl_rl import (
 from rsl_rl.runners import OnPolicyRunner  # PPO 훈련 러너
 
 
+class BestModelRunner(OnPolicyRunner):
+    """
+    Best Model 저장 기능이 추가된 OnPolicyRunner
+
+    매 이터레이션마다 평균 리워드를 확인하고,
+    역대 최고 리워드를 달성하면 best_model.pt로 저장합니다.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.best_reward = float('-inf')  # 역대 최고 리워드
+        self.best_iteration = 0           # 최고 리워드 달성 이터레이션
+
+    def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):
+        """
+        학습 실행 (Best Model 저장 기능 포함)
+
+        부모 클래스의 learn()을 한 이터레이션씩 실행하면서
+        best model을 추적합니다.
+        """
+        # 초기화
+        self.alg.init_storage(
+            self.env.num_envs,
+            num_learning_iterations,
+            [self.env.num_obs],
+            [self.env.num_privileged_obs] if self.env.num_privileged_obs is not None else [0],
+            [self.env.num_actions],
+        )
+
+        obs, _ = self.env.get_observations()
+        critic_obs = obs
+        obs, critic_obs = obs.to(self.device), critic_obs.to(self.device)
+        self.alg.actor_critic.train()
+
+        ep_infos = []
+        rewbuffer = []
+        lenbuffer = []
+        cur_reward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
+        cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
+
+        # 메인 학습 루프
+        for it in range(num_learning_iterations):
+            # 데이터 수집
+            for _ in range(self.num_steps_per_env):
+                actions = self.alg.act(obs, critic_obs)
+                obs, rewards, dones, infos = self.env.step(actions)
+                critic_obs = obs
+                obs, critic_obs, rewards, dones = (
+                    obs.to(self.device),
+                    critic_obs.to(self.device),
+                    rewards.to(self.device),
+                    dones.to(self.device),
+                )
+                self.alg.process_env_step(rewards, dones, infos)
+
+                # 에피소드 통계
+                cur_reward_sum += rewards
+                cur_episode_length += 1
+                new_ids = (dones > 0).nonzero(as_tuple=False)
+                rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
+                lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
+                cur_reward_sum[new_ids] = 0
+                cur_episode_length[new_ids] = 0
+
+            # PPO 업데이트
+            mean_value_loss, mean_surrogate_loss = self.alg.update()
+
+            # 평균 리워드 계산
+            if len(rewbuffer) > 0:
+                mean_reward = sum(rewbuffer[-100:]) / len(rewbuffer[-100:])
+
+                # Best Model 체크 및 저장
+                if mean_reward > self.best_reward:
+                    self.best_reward = mean_reward
+                    self.best_iteration = it
+                    self.save("best_model")
+                    print(f"[Best Model] Iteration {it}: reward = {mean_reward:.4f} (saved!)")
+
+            # 로깅
+            self.log(locals())
+
+            # 주기적 체크포인트 저장
+            if it % self.save_interval == 0:
+                self.save(f"model_{it}")
+
+        # 최종 모델 저장
+        self.save(f"model_{num_learning_iterations}")
+
+        print(f"\n{'='*50}")
+        print(f"Best Model: iteration {self.best_iteration}, reward = {self.best_reward:.4f}")
+        print(f"{'='*50}")
+
+
 def main():
     """
     메인 학습 함수
@@ -156,8 +249,8 @@ def main():
     log_dir = f"./logs/pen_grasp/{timestamp}"
     os.makedirs(log_dir, exist_ok=True)
 
-    # 훈련 러너 생성
-    runner = OnPolicyRunner(
+    # 훈련 러너 생성 (Best Model 저장 기능 포함)
+    runner = BestModelRunner(
         env,
         agent_cfg.to_dict(),      # 설정을 딕셔너리로 변환
         log_dir=log_dir,
