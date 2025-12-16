@@ -41,6 +41,8 @@ parser.add_argument("--resume", action="store_true",
                     help="이전 학습 이어서 하기")
 parser.add_argument("--checkpoint", type=str, default=None,
                     help="이어서 학습할 체크포인트 파일 경로 (예: model_3500.pt)")
+parser.add_argument("--env_version", type=str, default="v2", choices=["v1", "v2"],
+                    help="환경 버전 (v1: 기존, v2: reach 기반 단순화)")
 
 # AppLauncher 인자 추가 (--headless 등)
 AppLauncher.add_app_launcher_args(parser)
@@ -54,7 +56,14 @@ simulation_app = app_launcher.app
 
 # Isaac Sim 실행 후 import (순서 중요!)
 import torch
-from envs.pen_grasp_env import PenGraspEnv, PenGraspEnvCfg
+
+# 환경 버전에 따라 import
+if args.env_version == "v2":
+    from envs.pen_grasp_env_v2 import PenGraspEnv, PenGraspEnvCfg
+    print("환경: v2 (reach 기반 단순화)")
+else:
+    from envs.pen_grasp_env import PenGraspEnv, PenGraspEnvCfg
+    print("환경: v1 (기존)")
 
 # RSL-RL 라이브러리
 from isaaclab_rl.rsl_rl import (
