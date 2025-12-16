@@ -19,7 +19,9 @@ RSL-RL 라이브러리의 PPO 알고리즘을 사용합니다.
     - GPU 메모리에 따라 num_envs 조절 필요
 """
 import argparse
+import glob
 import os
+import shutil
 import sys
 
 # 프로젝트 경로 추가 (envs 모듈 import를 위해)
@@ -62,6 +64,105 @@ from isaaclab_rl.rsl_rl import (
     RslRlVecEnvWrapper           # 환경 래퍼
 )
 from rsl_rl.runners import OnPolicyRunner
+
+
+def find_and_save_best_model(log_dir: str):
+    """
+    TensorBoard 로그에서 best iteration을 찾아 model_best.pt로 저장
+
+    Args:
+        log_dir: 로그 디렉토리 경로 (예: ./logs/pen_grasp)
+    """
+    try:
+        from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+    except ImportError:
+        print("경고: tensorboard가 설치되지 않아 best model을 찾을 수 없습니다.")
+        return
+
+    # TensorBoard 이벤트 파일 찾기
+    event_files = glob.glob(os.path.join(log_dir, "**", "events.out.tfevents.*"), recursive=True)
+    if not event_files:
+        print(f"경고: {log_dir}에서 TensorBoard 이벤트 파일을 찾을 수 없습니다.")
+        return
+
+    # 가장 최근 이벤트 파일 사용
+    event_file = max(event_files, key=os.path.getmtime)
+    event_dir = os.path.dirname(event_file)
+
+    print(f"\nBest model 탐색 중...")
+    print(f"  로그 경로: {event_dir}")
+
+    # 이벤트 로드
+    ea = EventAccumulator(event_dir)
+    ea.Reload()
+
+    # Mean reward 태그 찾기
+    scalar_tags = ea.Tags().get('scalars', [])
+    reward_tag = None
+    for tag in scalar_tags:
+        if 'reward' in tag.lower() and 'mean' in tag.lower():
+            reward_tag = tag
+            break
+
+    if reward_tag is None:
+        # 대체 태그 시도
+        for tag in scalar_tags:
+            if 'reward' in tag.lower():
+                reward_tag = tag
+                break
+
+    if reward_tag is None:
+        print(f"  경고: reward 관련 태그를 찾을 수 없습니다.")
+        print(f"  사용 가능한 태그: {scalar_tags[:10]}...")
+        return
+
+    # Best iteration 찾기
+    events = ea.Scalars(reward_tag)
+    if not events:
+        print("  경고: reward 데이터가 없습니다.")
+        return
+
+    best_event = max(events, key=lambda e: e.value)
+    best_step = best_event.step
+    best_reward = best_event.value
+
+    print(f"  Best iteration: {best_step} (reward: {best_reward:.4f})")
+
+    # save_interval=100이므로 가장 가까운 저장된 모델 찾기
+    save_interval = 100
+    closest_saved_step = round(best_step / save_interval) * save_interval
+
+    # 모델 파일 찾기
+    model_path = os.path.join(log_dir, f"model_{closest_saved_step}.pt")
+    if not os.path.exists(model_path):
+        # 정확한 스텝의 모델이 없으면 가장 가까운 모델 찾기
+        model_files = glob.glob(os.path.join(log_dir, "model_*.pt"))
+        if not model_files:
+            print(f"  경고: {log_dir}에서 모델 파일을 찾을 수 없습니다.")
+            return
+
+        # 가장 가까운 스텝의 모델 찾기
+        def get_step(path):
+            name = os.path.basename(path)
+            try:
+                return int(name.replace("model_", "").replace(".pt", ""))
+            except ValueError:
+                return -1
+
+        model_files_with_steps = [(f, get_step(f)) for f in model_files if get_step(f) >= 0]
+        if not model_files_with_steps:
+            print("  경고: 유효한 모델 파일이 없습니다.")
+            return
+
+        # best_step에 가장 가까운 모델 선택
+        model_path, closest_saved_step = min(model_files_with_steps, key=lambda x: abs(x[1] - best_step))
+
+    # model_best.pt로 복사
+    best_model_path = os.path.join(log_dir, "model_best.pt")
+    shutil.copy2(model_path, best_model_path)
+
+    print(f"  Best model 저장: {best_model_path}")
+    print(f"  (iteration {closest_saved_step}의 모델 복사)")
 
 
 def main():
@@ -129,11 +230,14 @@ def main():
     # RSL-RL 래퍼로 환경 감싸기
     env = RslRlVecEnvWrapper(env)
 
+    # 로그 디렉토리
+    log_dir = "./logs/pen_grasp"
+
     # OnPolicyRunner 생성
     runner = OnPolicyRunner(
         env,
         agent_cfg.to_dict(),
-        log_dir="./logs/pen_grasp",
+        log_dir=log_dir,
         device=agent_cfg.device
     )
 
@@ -176,6 +280,9 @@ def main():
     # ============================================================
     runner.save("final_model")
     print("\n학습 완료! 모델이 저장되었습니다.")
+
+    # Best model 찾아서 저장
+    find_and_save_best_model(log_dir)
 
     # 환경 정리
     env.close()
