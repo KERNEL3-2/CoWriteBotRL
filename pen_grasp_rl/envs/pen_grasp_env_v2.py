@@ -81,13 +81,13 @@ class PenGraspSceneCfg(InteractiveSceneCfg):
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.0, 0.0, 0.0),
             joint_pos={
-                # 모든 관절 0 → 그리퍼가 위를 향하는 직립 자세
-                # 펜에 접근하려면 팔을 움직여야 함 → 위에서 내려오는 동작 유도
+                # 중간 자세: 펜에 가깝지만 측면 접근은 어렵게
+                # 완전 직립보다 약간 구부린 상태
                 "joint_1": 0.0,
-                "joint_2": 0.0,
-                "joint_3": 0.0,
+                "joint_2": 0.3,    # 약간 앞으로
+                "joint_3": 0.5,    # 약간 구부림
                 "joint_4": 0.0,
-                "joint_5": 0.0,
+                "joint_5": 0.5,    # 약간 아래로
                 "joint_6": 0.0,
                 "gripper_rh_r1": 0.0,
                 "gripper_rh_r2": 0.0,
@@ -343,6 +343,24 @@ def action_rate_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
     return torch.sum(torch.square(env.action_manager.action), dim=-1)
 
 
+def approach_from_above_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """
+    위에서 접근 보상
+
+    그리퍼가 펜 캡보다 위에 있을 때 보상.
+    측면 접근 대신 위에서 내려오는 동작을 유도.
+    """
+    robot: Articulation = env.scene["robot"]
+    pen: RigidObject = env.scene["pen"]
+
+    grasp_pos = get_grasp_point(robot)
+    cap_pos = get_pen_cap_pos(pen)
+
+    # 그리퍼 Z > 캡 Z 이면 보상
+    height_diff = grasp_pos[:, 2] - cap_pos[:, 2]
+    return torch.clamp(height_diff, min=0.0, max=0.1) * 10.0  # 최대 1.0
+
+
 # #############################################################################
 #                              Configuration Classes
 # #############################################################################
@@ -387,6 +405,9 @@ class RewardsCfg:
     === 목표 2: 방향 ===
     - orientation_error: dot product 오차 (페널티)
 
+    === 목표 3: 위에서 접근 ===
+    - approach_bonus: 그리퍼가 캡보다 위에 있으면 보상
+
     === 정규화 ===
     - action_rate: 행동 크기 페널티
     """
@@ -396,6 +417,9 @@ class RewardsCfg:
 
     # 방향 추적
     orientation_error = RewTerm(func=orientation_error_reward, weight=-0.3)
+
+    # 위에서 접근 유도
+    approach_bonus = RewTerm(func=approach_from_above_reward, weight=0.3)
 
     # 정규화
     action_rate = RewTerm(func=action_rate_penalty, weight=-0.001)

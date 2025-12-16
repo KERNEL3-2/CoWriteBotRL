@@ -224,8 +224,96 @@ position_error, position_fine, orientation_error, action_rate
 - `--env_version` 인자 추가 (v1/v2 선택 가능)
 
 #### 다음 단계
-- [ ] 새 초기 자세로 학습 실행
+- [x] 새 초기 자세로 학습 실행
 - [ ] 위에서 접근하는 동작 학습 확인
 - [ ] 측면 충돌 감소 확인
+
+---
+
+### 2025-12-16 두 번째 학습 결과 (3,000 iteration, 직립 자세)
+
+#### 학습 결과
+
+| 지표 | 초기 | 최종 | 비교 (이전) |
+|------|------|------|-------------|
+| position_fine | 0.0001 | **0.69** | 0.72 (비슷) |
+| orientation_error | -0.116 | **-0.015** | -0.016 (비슷) |
+| mean_reward | -3.25 | **6.41** | 6.90 (비슷) |
+| noise_std | 0.31 | **0.37** | 0.32 |
+
+#### play.py 확인 결과
+
+- ✅ 위에서 내려오긴 함 (초기 자세 효과)
+- ❌ **joint_2만 움직여서 바로 아래로 꼬라박음**
+- ❌ z축 정렬, 펜 캡 위치 찾기 예상보다 안됨
+
+#### 문제 분석
+
+1. **초기 거리 문제**
+   - 직립 자세에서 그리퍼 위치 ≈ (0, 0, ~0.8m)
+   - 펜 위치: (0.5, 0, 0.3)
+   - 거리 약 60-70cm로 탐험이 어려움
+
+2. **Local Minimum**
+   - joint_2만 움직이면 어느 정도 보상 받음
+   - 더 복잡한 동작(joint_1 회전 등) 안 배움
+
+---
+
+### 2025-12-16 중간 자세 + 위에서 접근 보상 추가
+
+#### 변경 사항
+
+**1. 중간 자세로 시작 (`pen_grasp_env_v2.py`)**
+
+| 관절 | 이전 | 변경 | 설명 |
+|------|------|------|------|
+| joint_1 | 0.0 | 0.0 | |
+| joint_2 | 0.0 | **0.3** | 약간 앞으로 |
+| joint_3 | 0.0 | **0.5** | 약간 구부림 |
+| joint_4 | 0.0 | 0.0 | |
+| joint_5 | 0.0 | **0.5** | 약간 아래로 |
+| joint_6 | 0.0 | 0.0 | |
+
+→ 펜에 더 가까우면서도 측면 접근은 어렵게
+
+**2. 위에서 접근 보상 추가**
+
+```python
+def approach_from_above_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """그리퍼가 캡보다 위에 있을 때 보상"""
+    grasp_pos = get_grasp_point(robot)
+    cap_pos = get_pen_cap_pos(pen)
+
+    # 그리퍼 Z > 캡 Z 이면 보상
+    height_diff = grasp_pos[:, 2] - cap_pos[:, 2]
+    return torch.clamp(height_diff, min=0.0, max=0.1) * 10.0  # 최대 1.0
+```
+
+```python
+# RewardsCfg
+approach_bonus = RewTerm(func=approach_from_above_reward, weight=0.3)
+```
+
+#### 현재 보상 구조 (5개)
+
+| 보상 | weight | 설명 |
+|------|--------|------|
+| position_error | -0.5 | 거리 페널티 |
+| position_fine | +1.0 | 정밀 위치 보상 |
+| orientation_error | -0.3 | 방향 오차 페널티 |
+| **approach_bonus** | **+0.3** | **위에서 접근 보상 (신규)** |
+| action_rate | -0.001 | 행동 페널티 |
+
+#### 기대 효과
+
+1. 중간 자세 → 펜에 가까워서 탐험 쉬움
+2. approach_bonus → 위에서 접근하는 동작 유도
+3. 측면 접근 시 approach_bonus 못 받음
+
+#### 다음 단계
+- [ ] 새 설정으로 학습 실행
+- [ ] approach_bonus 보상 증가 확인
+- [ ] 위에서 접근하는 동작 학습 확인
 
 ---
