@@ -784,6 +784,107 @@ cap_pos = pen_pos + pen_axis_world * half_len
 ```
 
 #### 다음 단계
-- [ ] 수정된 보상함수로 학습 재개 (resume)
+- [x] 수정된 보상함수로 학습 재개 (resume)
 - [ ] TensorBoard에서 z_axis_alignment 보상 증가 확인
 - [ ] 그리퍼가 위에서 캡을 향해 내려오는지 play.py로 확인
+
+---
+
+### 2025-12-16 50,000 iteration 학습 분석 및 보상 함수 개선
+
+#### 학습 결과 분석 (z축 수정 후 50,000 iteration)
+
+**로그 위치**: `/home/fhekwn549/pen_grasp/`
+
+| 지표 | 초기 | 최종 | 상태 |
+|------|------|------|------|
+| distance_to_cap | 0.73 | 0.72 | 안정 (약 3cm 거리) |
+| z_axis_alignment | 0.22 | **0.26** | 소폭 상승 |
+| floor_collision | 0.0 | 0.0 | 바닥 충돌 없음 |
+| mean_episode_length | 300 | 300 | 모두 시간 초과 |
+| mean_reward | 9.6 | 9.0 | 안정적 |
+| time_out | 100% | 100% | 성공 종료 없음 |
+
+#### 문제점 분석
+
+1. **z_axis_alignment 보상이 여전히 낮음 (최대 0.26)**
+   - weight가 0.5로 distance_to_cap(1.0)보다 낮아 우선순위가 밀림
+
+2. **태스크 완료 조건 없음**
+   - 성공해도 에피소드가 계속 진행됨
+   - 성공 시 큰 보상 + 조기 종료가 필요
+
+3. **모든 에피소드가 시간 초과로 종료**
+   - 성공/실패 구분이 없음
+
+#### 변경 사항
+
+**1. z_axis_alignment weight 증가**
+```python
+# 이전
+z_axis_alignment = RewTerm(func=z_axis_alignment_reward, weight=0.5)
+
+# 변경
+z_axis_alignment = RewTerm(func=z_axis_alignment_reward, weight=1.5)
+```
+
+**2. alignment_success_reward 함수 추가**
+```python
+def alignment_success_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """
+    위치 + 정렬 성공 보상
+
+    성공 조건:
+    1. 그리퍼-캡 거리 3cm 이내
+    2. Z축 정렬 (dot product < -0.9)
+
+    Returns:
+        (num_envs,) - 성공 시 1.0, 아니면 0.0
+    """
+    # ... 거리 및 정렬 계산 ...
+    close_enough = distance_to_cap < 0.03
+    aligned = dot_product < -0.9
+    return (close_enough & aligned).float()
+```
+
+**3. task_success_termination 종료 조건 추가**
+```python
+def task_success_termination(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """
+    Task 성공 종료 조건
+
+    성공 조건: 거리 < 3cm AND dot < -0.9
+    """
+    # ... alignment_success_reward와 동일한 로직 ...
+    return close_enough & aligned
+```
+
+#### 현재 보상 함수 구성
+
+| 보상함수 | weight | 설명 |
+|---------|--------|------|
+| `distance_to_cap` | 1.0 | grasp point → 펜 캡 거리 (exponential) |
+| `z_axis_alignment` | **1.5** | z축 반대 방향 정렬 (기존 0.5) |
+| `alignment_success` | **5.0** | 위치+정렬 성공 시 큰 보상 (신규) |
+| `floor_collision` | 1.0 | 바닥 충돌 페널티 |
+| `action_rate` | 0.01 | 액션 크기 페널티 |
+
+#### 현재 종료 조건
+
+| 종료 조건 | 설명 |
+|----------|------|
+| `time_out` | 에피소드 시간 초과 (10초) |
+| `pen_dropped` | 펜 낙하 (현재 kinematic이라 미발동) |
+| `task_success` | **위치+정렬 성공 시 조기 종료 (신규)** |
+
+#### TensorBoard 확인 지표
+
+학습 진행 시 다음 지표 모니터링:
+- `Episode_Reward/alignment_success`: 0보다 커지면 성공 발생
+- `Episode_Termination/task_success`: 성공률 (높을수록 좋음)
+- `Episode_Termination/time_out`: 낮아져야 함 (성공이 늘면 감소)
+
+#### 다음 단계
+- [ ] 수정된 환경으로 학습 재개 (--resume)
+- [ ] task_success 종료 비율 모니터링
+- [ ] 성공 시 그리퍼 닫기 동작 추가 검토
