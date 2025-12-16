@@ -535,16 +535,17 @@ def floor_collision_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
 
 def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     """
-    Z축 정렬 보상
+    Z축 정렬 보상 (점진적 보상)
 
     그리퍼의 Z축을 펜의 Z축과 평행하게 정렬하도록 유도합니다.
 
-    === 조건 (2025-12-16 수정) ===
-    1. 그리퍼가 펜 캡에서 10cm 이내일 때만 보상
-    2. dot product < -0.9 일 때만 보상 (반대 방향, 그리퍼가 캡을 향해 내려옴)
+    === 수정 사항 (2025-12-16) ===
+    - 기존: dot < -0.9 일 때만 보상 (절벽 보상 - 학습 신호 없음)
+    - 수정: 전체 범위에서 점진적 보상 (모든 상태에서 학습 신호)
+    - 거리 조건: 10cm → 30cm로 완화
 
     Returns:
-        (num_envs,) - 정렬 보상
+        (num_envs,) - 정렬 보상 (0.0 ~ 1.0)
     """
     robot: Articulation = env.scene["robot"]
     pen: RigidObject = env.scene["pen"]
@@ -573,31 +574,29 @@ def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     gripper_z_z = 1.0 - 2.0 * (qx * qx + qy * qy)
     gripper_z_axis = torch.stack([gripper_z_x, gripper_z_y, gripper_z_z], dim=-1)
 
-    # --- 정렬 계산 ---
+    # --- 정렬 계산 (점진적 보상) ---
     # dot product: +1 = 같은 방향, -1 = 반대 방향, 0 = 수직
-    # 그리퍼가 위에서 캡을 잡으려면 dot = -1 이어야 함
     dot_product = torch.sum(pen_z_axis * gripper_z_axis, dim=-1)
 
-    # dot < -0.9 일 때만 보상 (반대 방향일 때)
-    # -dot_product를 사용하여 dot=-1일 때 최대 보상
-    alignment_reward = torch.clamp(-dot_product - 0.9, min=0.0) * 10.0
+    # [수정] 전체 범위에서 점진적 보상
+    # dot = -1 → 1.0, dot = 0 → 0.5, dot = +1 → 0.0
+    alignment_reward = (-dot_product + 1.0) / 2.0
 
-    # 10cm 이내일 때만 적용
-    distance_factor = torch.clamp(1.0 - distance_to_cap / 0.10, min=0.0)
+    # [수정] 거리 조건 완화: 10cm → 30cm
+    distance_factor = torch.clamp(1.0 - distance_to_cap / 0.30, min=0.0)
 
     return alignment_reward * distance_factor
 
 
 def alignment_success_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     """
-    위치 + 정렬 성공 보상
+    위치 + 정렬 성공 보상 (조건 완화)
 
-    그리퍼가 펜 캡에 정확히 위치하고 정렬되면 큰 보상을 줍니다.
-    task_success_termination과 동일한 조건이지만, 종료 전에 보상을 받습니다.
+    그리퍼가 펜 캡에 위치하고 정렬되면 큰 보상을 줍니다.
 
-    성공 조건:
-    1. 그리퍼-캡 거리 3cm 이내
-    2. Z축 정렬 (dot product < -0.9)
+    === 수정 사항 (2025-12-16) ===
+    - 거리: 3cm → 5cm
+    - 정렬: dot < -0.9 → dot < -0.7 (약 45도)
 
     Returns:
         (num_envs,) - 성공 시 1.0, 아니면 0.0
@@ -630,9 +629,9 @@ def alignment_success_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
 
     dot_product = torch.sum(pen_z_axis * gripper_z_axis, dim=-1)
 
-    # 성공 조건
-    close_enough = distance_to_cap < 0.03
-    aligned = dot_product < -0.9
+    # [수정] 성공 조건 완화
+    close_enough = distance_to_cap < 0.05  # 3cm → 5cm
+    aligned = dot_product < -0.7           # -0.9 → -0.7 (약 45도)
 
     success = (close_enough & aligned).float()
     return success
@@ -661,13 +660,13 @@ def pen_dropped_termination(env: ManagerBasedRLEnv) -> torch.Tensor:
 
 def task_success_termination(env: ManagerBasedRLEnv) -> torch.Tensor:
     """
-    Task 성공 종료 조건
+    Task 성공 종료 조건 (조건 완화)
 
-    그리퍼가 펜 캡에 정확히 위치하고 정렬되면 에피소드를 성공으로 종료합니다.
+    그리퍼가 펜 캡에 위치하고 정렬되면 에피소드를 성공으로 종료합니다.
 
-    성공 조건:
-    1. 그리퍼-캡 거리 3cm 이내
-    2. Z축 정렬 (dot product < -0.9)
+    === 수정 사항 (2025-12-16) ===
+    - 거리: 3cm → 5cm
+    - 정렬: dot < -0.9 → dot < -0.7 (약 45도)
 
     Returns:
         (num_envs,) - True/False 종료 여부
@@ -700,9 +699,9 @@ def task_success_termination(env: ManagerBasedRLEnv) -> torch.Tensor:
 
     dot_product = torch.sum(pen_z_axis * gripper_z_axis, dim=-1)
 
-    # 성공 조건: 3cm 이내 AND dot < -0.9 (반대 방향)
-    close_enough = distance_to_cap < 0.03
-    aligned = dot_product < -0.9
+    # [수정] 성공 조건 완화
+    close_enough = distance_to_cap < 0.05  # 3cm → 5cm
+    aligned = dot_product < -0.7           # -0.9 → -0.7
 
     return close_enough & aligned
 
