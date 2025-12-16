@@ -885,6 +885,77 @@ def task_success_termination(env: ManagerBasedRLEnv) -> torch.Tensor:
 - `Episode_Termination/time_out`: 낮아져야 함 (성공이 늘면 감소)
 
 #### 다음 단계
-- [ ] 수정된 환경으로 학습 재개 (--resume)
+- [x] 수정된 환경으로 학습 재개 (--resume)
 - [ ] task_success 종료 비율 모니터링
 - [ ] 성공 시 그리퍼 닫기 동작 추가 검토
+
+---
+
+### 2025-12-16 보상 조건 완화 (학습 정체 해결)
+
+#### 문제점
+- 50,000 iter resume 후 추가 학습에서 reward 정체
+- task_success: 0.3~0.5% (매우 낮음)
+- 원인: checkpoint + reward 구조 변경 시 기존 policy 혼란
+
+#### 발견된 문제: "절벽 보상" 구조
+
+**기존 z_axis_alignment_reward:**
+```python
+alignment_reward = torch.clamp(-dot_product - 0.9, min=0.0) * 10.0
+```
+
+| dot product | 보상 |
+|-------------|------|
+| -1.0 (완벽) | 1.0 |
+| -0.9 | **0** |
+| -0.5 | **0** |
+| 0.0 (수직) | **0** |
+
+→ dot > -0.9 이면 보상 = 0 (학습 신호 없음!)
+
+#### 수정 사항
+
+**1. z_axis_alignment_reward: 절벽 → 점진적 보상**
+```python
+# 수정: 전체 범위에서 점진적 보상
+# dot = -1 → 1.0, dot = 0 → 0.5, dot = +1 → 0.0
+alignment_reward = (-dot_product + 1.0) / 2.0
+
+# 거리 조건 완화: 10cm → 30cm
+distance_factor = torch.clamp(1.0 - distance_to_cap / 0.30, min=0.0)
+```
+
+**2. alignment_success_reward: 조건 완화**
+```python
+close_enough = distance_to_cap < 0.05  # 3cm → 5cm
+aligned = dot_product < -0.7           # -0.9 → -0.7 (약 45도)
+```
+
+**3. task_success_termination: 조건 완화**
+```python
+close_enough = distance_to_cap < 0.05  # 3cm → 5cm
+aligned = dot_product < -0.7           # -0.9 → -0.7
+```
+
+#### 수정 요약
+
+| 항목 | 수정 전 | 수정 후 |
+|------|---------|---------|
+| **정렬 보상 방식** | 절벽 (dot < -0.9만) | 점진적 (전체 범위) |
+| **정렬 보상 거리** | 10cm 이내 | 30cm 이내 |
+| **Success 거리** | 3cm | 5cm |
+| **Success 정렬** | dot < -0.9 (~25도) | dot < -0.7 (~45도) |
+| **학습 시작** | checkpoint 이어서 | **새로 시작** |
+
+#### 학습 실행 명령어
+```bash
+# checkpoint 없이 새로 시작
+python train.py --headless --num_envs 8192 --max_iterations 20000
+```
+
+#### 다음 단계
+- [ ] 새 환경으로 학습 진행
+- [ ] z_axis_alignment 보상 증가 확인
+- [ ] task_success 비율 증가 확인
+- [ ] 학습 성공 시 조건 점진적 강화 (5cm→3cm, -0.7→-0.85)
