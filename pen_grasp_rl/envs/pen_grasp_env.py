@@ -588,6 +588,92 @@ def z_axis_alignment_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     return alignment_reward * distance_factor
 
 
+def base_orientation_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """
+    베이스(joint_1) 방향 보상
+
+    로봇 베이스(joint_1)가 펜 방향을 향하도록 유도합니다.
+    joint_1이 펜이 있는 방향으로 회전하면 높은 보상.
+
+    === 추가 (2025-12-16) ===
+    로봇이 먼저 펜 방향으로 팔을 뻗을 수 있도록 유도
+
+    Returns:
+        (num_envs,) - 방향 정렬 보상 (0.0 ~ 1.0)
+    """
+    robot: Articulation = env.scene["robot"]
+    pen: RigidObject = env.scene["pen"]
+
+    # 로봇 베이스 위치 (환경 원점)
+    robot_base = env.scene.env_origins
+
+    # 펜 위치
+    pen_pos = pen.data.root_pos_w
+
+    # 펜으로의 방향 (xy 평면에서)
+    to_pen = pen_pos - robot_base
+    to_pen_angle = torch.atan2(to_pen[:, 1], to_pen[:, 0])  # 펜 방향 각도
+
+    # joint_1의 현재 각도
+    joint_1_angle = robot.data.joint_pos[:, 0]
+
+    # 각도 차이 계산
+    angle_diff = to_pen_angle - joint_1_angle
+    # -π ~ π 범위로 정규화
+    angle_diff = torch.atan2(torch.sin(angle_diff), torch.cos(angle_diff))
+    angle_diff = torch.abs(angle_diff)
+
+    # 각도 차이가 작을수록 높은 보상 (exponential)
+    return torch.exp(-angle_diff * 2.0)
+
+
+def approach_from_above_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """
+    위에서 접근 보상
+
+    그리퍼가 펜 캡의 위쪽에서 접근하도록 유도합니다.
+    측면에서 접근하면 펜과 충돌하므로, 캡 축 방향(위)에서 내려오도록 합니다.
+
+    === 추가 (2025-12-16) ===
+    그리퍼→캡 방향이 펜 z축과 반대(위에서 내려오는)일수록 높은 보상
+
+    Returns:
+        (num_envs,) - 위에서 접근 보상 (0.0 ~ 1.0)
+    """
+    robot: Articulation = env.scene["robot"]
+    pen: RigidObject = env.scene["pen"]
+
+    grasp_pos = get_grasp_point(robot)
+    pen_pos = pen.data.root_pos_w
+    pen_quat = pen.data.root_quat_w
+
+    # 캡 위치 계산
+    qw, qx, qy, qz = pen_quat[:, 0], pen_quat[:, 1], pen_quat[:, 2], pen_quat[:, 3]
+    pen_z_x = 2.0 * (qx * qz + qw * qy)
+    pen_z_y = 2.0 * (qy * qz - qw * qx)
+    pen_z_z = 1.0 - 2.0 * (qx * qx + qy * qy)
+    pen_z_axis = torch.stack([pen_z_x, pen_z_y, pen_z_z], dim=-1)
+    cap_pos = pen_pos + (PEN_LENGTH / 2) * pen_z_axis
+
+    # 그리퍼에서 캡으로의 방향 벡터
+    to_cap = cap_pos - grasp_pos
+    to_cap_dist = torch.norm(to_cap, dim=-1, keepdim=True)
+    to_cap_normalized = to_cap / (to_cap_dist + 1e-6)
+
+    # 펜 z축 방향과 접근 방향의 정렬
+    # 위에서 접근하면 to_cap_normalized ≈ -pen_z_axis (반대 방향이어야 함)
+    # dot product가 -1에 가까우면 위에서 접근 중
+    alignment = -torch.sum(to_cap_normalized * pen_z_axis, dim=-1)
+
+    # alignment가 1에 가까우면 위에서 접근 (0~1로 클램프)
+    approach_reward = torch.clamp(alignment, min=0.0)
+
+    # 거리가 가까울수록 이 보상이 더 중요 (30cm 이내에서 활성화)
+    distance_factor = torch.clamp(1.0 - to_cap_dist.squeeze(-1) / 0.30, min=0.0)
+
+    return approach_reward * distance_factor
+
+
 def alignment_success_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     """
     위치 + 정렬 성공 보상 (조건 완화)
@@ -767,7 +853,9 @@ class RewardsCfg:
     === 보상 구성 (2025-12-16 수정) ===
     양수 보상 (목표 행동 유도):
     - distance_to_cap (w=1.0): 캡에 가까워지기 (exponential)
-    - z_axis_alignment (w=1.5): 축 정렬 - 반대 방향 (10cm 이내)
+    - z_axis_alignment (w=1.5): 축 정렬 - 반대 방향
+    - base_orientation (w=0.5): joint_1이 펜 방향을 향하도록 [NEW]
+    - approach_from_above (w=1.0): 위에서 접근하도록 [NEW]
     - alignment_success (w=5.0): 위치+정렬 성공 시 큰 보상
 
     음수 보상 (나쁜 행동 억제):
@@ -776,6 +864,8 @@ class RewardsCfg:
     """
     distance_to_cap = RewTerm(func=distance_ee_cap_reward, weight=1.0)
     z_axis_alignment = RewTerm(func=z_axis_alignment_reward, weight=1.5)
+    base_orientation = RewTerm(func=base_orientation_reward, weight=0.5)  # NEW
+    approach_from_above = RewTerm(func=approach_from_above_reward, weight=1.0)  # NEW
     floor_collision = RewTerm(func=floor_collision_penalty, weight=1.0)
     action_rate = RewTerm(func=action_rate_penalty, weight=0.01)
     alignment_success = RewTerm(func=alignment_success_reward, weight=5.0)

@@ -955,7 +955,127 @@ python train.py --headless --num_envs 8192 --max_iterations 20000
 ```
 
 #### 다음 단계
-- [ ] 새 환경으로 학습 진행
-- [ ] z_axis_alignment 보상 증가 확인
+- [x] 새 환경으로 학습 진행
+- [x] z_axis_alignment 보상 증가 확인
 - [ ] task_success 비율 증가 확인
 - [ ] 학습 성공 시 조건 점진적 강화 (5cm→3cm, -0.7→-0.85)
+
+---
+
+### 2025-12-16 접근 방향 보상 추가 (측면 충돌 문제 해결)
+
+#### 학습 결과 분석 (model_8100.pt, 약 8,000 iteration)
+
+**로그 위치**: `/home/fhekwn549/events.out.tfevents.*.0`
+
+| 지표 | 초기 | 최종 | 상태 |
+|------|------|------|------|
+| distance_to_cap | 0.016 | **0.74** | ✅ 펜 캡 접근 학습됨 |
+| z_axis_alignment | 0.018 | **1.11** | ✅ 정렬 보상 증가 |
+| alignment_success | 0 | 0.0001 | ❌ 거의 성공 없음 |
+| task_success | 0% | **0.66%** | ❌ 매우 낮음 |
+| time_out | 40% | **99%** | ❌ 거의 모두 타임아웃 |
+| mean_episode_length | 130 | **300** (최대) | 항상 최대 길이 |
+| mean_noise_std | 0.31 | **0.73** | ⚠️ 탐색 노이즈 증가 |
+
+#### play.py 시각적 확인 결과
+
+**관찰된 동작:**
+1. 그리퍼가 벌린 상태로 펜 캡 방향으로 잘 접근함
+2. **문제**: 그리퍼가 **측면에서** 접근해서 펜과 충돌
+3. 충돌 후 더 이상 진행 불가 (펜이 kinematic으로 고정)
+4. z축 정렬이 안 되는 근본 원인: 접근 방향이 잘못됨
+
+```
+나쁜 접근 (현재):          좋은 접근 (목표):
+  그리퍼 →                    ↓ 그리퍼
+      |                       |
+     [펜]                    [펜]
+```
+
+#### 해결책: 접근 방향 보상 추가
+
+**1. base_orientation_reward (신규)**
+- joint_1이 펜 방향을 향하도록 유도
+- 로봇 베이스가 펜 쪽으로 회전하면 보상
+
+```python
+def base_orientation_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """
+    베이스(joint_1) 방향 보상
+    joint_1이 펜 방향을 향하면 높은 보상
+    """
+    # 펜 방향 각도 계산
+    to_pen_angle = torch.atan2(to_pen[:, 1], to_pen[:, 0])
+
+    # joint_1 현재 각도
+    joint_1_angle = robot.data.joint_pos[:, 0]
+
+    # 각도 차이가 작을수록 높은 보상
+    angle_diff = torch.abs(to_pen_angle - joint_1_angle)
+    return torch.exp(-angle_diff * 2.0)
+```
+
+**2. approach_from_above_reward (신규)**
+- 그리퍼가 펜 캡 위쪽에서 접근하도록 유도
+- 측면 충돌 방지
+
+```python
+def approach_from_above_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """
+    위에서 접근 보상
+    그리퍼→캡 방향이 펜 z축과 반대(위에서 내려오는)일수록 높은 보상
+    """
+    # 그리퍼에서 캡으로의 방향
+    to_cap_normalized = (cap_pos - grasp_pos) / distance
+
+    # 위에서 접근하면 to_cap ≈ -pen_z_axis
+    alignment = -torch.sum(to_cap_normalized * pen_z_axis, dim=-1)
+
+    # 30cm 이내에서 활성화
+    distance_factor = torch.clamp(1.0 - distance / 0.30, min=0.0)
+
+    return torch.clamp(alignment, min=0.0) * distance_factor
+```
+
+#### 현재 보상 함수 구성
+
+| 보상함수 | weight | 설명 | 상태 |
+|---------|--------|------|------|
+| `distance_to_cap` | 1.0 | 캡에 가까워지기 | 기존 |
+| `z_axis_alignment` | 1.5 | z축 반대 방향 정렬 | 기존 |
+| `base_orientation` | **0.5** | joint_1이 펜 방향 향하기 | **신규** |
+| `approach_from_above` | **1.0** | 위에서 접근하기 | **신규** |
+| `alignment_success` | 5.0 | 위치+정렬 성공 보상 | 기존 |
+| `floor_collision` | 1.0 | 바닥 충돌 페널티 | 기존 |
+| `action_rate` | 0.01 | 액션 크기 페널티 | 기존 |
+
+#### 기대 효과
+
+새 보상 구조로 로봇이 다음 순서로 동작할 것으로 예상:
+
+1. **joint_1 회전** → 펜 방향으로 팔 정렬 (base_orientation)
+2. **캡 위로 이동** → 펜 캡 위쪽에 위치 (approach_from_above)
+3. **위에서 하강** → 캡을 향해 내려옴 (distance_to_cap)
+4. **z축 정렬** → 그리퍼 방향 맞추기 (z_axis_alignment)
+5. **성공** → 위치+정렬 달성 (alignment_success + task_success)
+
+#### 학습 실행 명령어
+
+```bash
+# 처음부터 새로 학습 (기존 모델은 측면 접근으로 학습됨)
+source ~/isaacsim_env/bin/activate
+cd ~/IsaacLab
+python pen_grasp_rl/scripts/train.py --num_envs 64
+```
+
+#### TensorBoard 확인 지표
+
+- `Episode_Reward/base_orientation`: 증가 확인
+- `Episode_Reward/approach_from_above`: 증가 확인
+- `Episode_Termination/task_success`: 성공률 증가 기대
+
+#### 다음 단계
+- [ ] 새 보상 구조로 학습 진행
+- [ ] 로봇이 위에서 접근하는지 play.py로 확인
+- [ ] task_success 비율 모니터링
