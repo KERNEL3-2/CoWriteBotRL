@@ -81,11 +81,13 @@ class PenGraspSceneCfg(InteractiveSceneCfg):
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.0, 0.0, 0.0),
             joint_pos={
+                # 모든 관절 0 → 그리퍼가 위를 향하는 직립 자세
+                # 펜에 접근하려면 팔을 움직여야 함 → 위에서 내려오는 동작 유도
                 "joint_1": 0.0,
                 "joint_2": 0.0,
-                "joint_3": 1.57,
+                "joint_3": 0.0,
                 "joint_4": 0.0,
-                "joint_5": 1.57,  # 그리퍼가 아래를 향함
+                "joint_5": 0.0,
                 "joint_6": 0.0,
                 "gripper_rh_r1": 0.0,
                 "gripper_rh_r2": 0.0,

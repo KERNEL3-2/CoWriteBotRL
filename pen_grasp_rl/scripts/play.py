@@ -12,6 +12,8 @@ from isaaclab.app import AppLauncher
 parser = argparse.ArgumentParser(description="Test trained pen grasping policy")
 parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
 parser.add_argument("--num_envs", type=int, default=16, help="Number of environments")
+parser.add_argument("--env_version", type=str, default="v2", choices=["v1", "v2"],
+                    help="환경 버전 (v1: 기존, v2: reach 기반)")
 
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
@@ -22,7 +24,14 @@ simulation_app = app_launcher.app
 
 import torch
 import torch.nn as nn
-from envs.pen_grasp_env import PenGraspEnv, PenGraspEnvCfg, PEN_LENGTH
+
+# 환경 버전에 따라 import
+if args.env_version == "v2":
+    from envs.pen_grasp_env_v2 import PenGraspEnv, PenGraspEnvCfg, PEN_LENGTH
+    print("환경: v2 (reach 기반)")
+else:
+    from envs.pen_grasp_env import PenGraspEnv, PenGraspEnvCfg, PEN_LENGTH
+    print("환경: v1 (기존)")
 
 # Visual markers for tip and cap
 import isaaclab.sim as sim_utils
