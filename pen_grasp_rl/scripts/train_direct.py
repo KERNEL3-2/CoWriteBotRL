@@ -48,44 +48,47 @@ simulation_app = app_launcher.app
 import torch
 from envs.e0509_direct_env import E0509DirectEnv, E0509DirectEnvCfg
 
-# RSL-RL
 from rsl_rl.runners import OnPolicyRunner
-from rsl_rl.modules import ActorCritic
-from rsl_rl.algorithms import PPO
-from rsl_rl.env import VecEnv
+
+from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
+from isaaclab.utils import configclass
 
 
-class DirectEnvWrapper(VecEnv):
-    """RSL-RL용 Direct 환경 래퍼"""
+# =============================================================================
+# RSL-RL 설정
+# =============================================================================
+@configclass
+class E0509DirectPPORunnerCfg(RslRlOnPolicyRunnerCfg):
+    """E0509 Direct 환경 PPO 설정"""
+    seed = 42
+    device = "cuda:0"
+    num_steps_per_env = 24
+    max_iterations = 5000
+    save_interval = 100
+    experiment_name = "e0509_direct"
+    run_name = "phase_v1"
 
-    def __init__(self, env: E0509DirectEnv):
-        self.env = env
-        self.num_envs = env.num_envs
-        self.device = env.device
-        self.num_obs = env.cfg.observation_space
-        self.num_privileged_obs = None
-        self.num_actions = env.cfg.action_space
-        self.max_episode_length = env.max_episode_length
+    policy = RslRlPpoActorCriticCfg(
+        init_noise_std=0.3,
+        actor_hidden_dims=[256, 256, 128],
+        critic_hidden_dims=[256, 256, 128],
+        activation="elu",
+    )
 
-    def get_observations(self):
-        obs_dict = self.env._get_observations()
-        return obs_dict["policy"], {"observations": {}}
-
-    def reset(self):
-        obs_dict, _ = self.env.reset()
-        return obs_dict["policy"], {"observations": {}}
-
-    def step(self, actions):
-        obs_dict, rewards, terminated, truncated, infos = self.env.step(actions)
-
-        # RSL-RL 형식으로 변환
-        dones = terminated | truncated
-        time_outs = truncated
-
-        return obs_dict["policy"], rewards, dones, {
-            "observations": {},
-            "time_outs": time_outs,
-        }
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=3e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
 
 
 def main():
@@ -100,42 +103,14 @@ def main():
     # 환경 생성
     env = E0509DirectEnv(cfg=env_cfg)
 
-    # RSL-RL 래퍼
-    wrapped_env = DirectEnvWrapper(env)
+    # RSL-RL 래퍼로 감싸기
+    env = RslRlVecEnvWrapper(env)
 
     # =============================================================================
     # PPO 설정
     # =============================================================================
-    train_cfg = {
-        "seed": 42,
-        "device": "cuda:0",
-        "num_steps_per_env": 24,
-        "max_iterations": args.max_iterations,
-        "save_interval": 100,
-        "experiment_name": "e0509_direct",
-        "run_name": "direct_phase",
-        "logger": "tensorboard",
-        "policy": {
-            "init_noise_std": 0.3,
-            "actor_hidden_dims": [256, 256, 128],
-            "critic_hidden_dims": [256, 256, 128],
-            "activation": "elu",
-        },
-        "algorithm": {
-            "value_loss_coef": 1.0,
-            "use_clipped_value_loss": True,
-            "clip_param": 0.2,
-            "entropy_coef": 0.01,
-            "num_learning_epochs": 5,
-            "num_mini_batches": 4,
-            "learning_rate": 3e-4,
-            "schedule": "adaptive",
-            "gamma": 0.99,
-            "lam": 0.95,
-            "desired_kl": 0.01,
-            "max_grad_norm": 1.0,
-        },
-    }
+    agent_cfg = E0509DirectPPORunnerCfg()
+    agent_cfg.max_iterations = args.max_iterations
 
     # =============================================================================
     # Runner 생성
@@ -144,10 +119,10 @@ def main():
     os.makedirs(log_dir, exist_ok=True)
 
     runner = OnPolicyRunner(
-        wrapped_env,
-        train_cfg,
+        env,
+        agent_cfg.to_dict(),
         log_dir=log_dir,
-        device=train_cfg["device"],
+        device=agent_cfg.device,
     )
 
     # 체크포인트 로드
@@ -177,31 +152,19 @@ def main():
     print(f"  저장 경로: {env_cfg.data_save_path}")
     print("=" * 60)
 
-    # 학습 루프 (단계 통계 출력 포함)
-    for iteration in range(args.max_iterations):
-        # 학습 스텝
-        runner.learn(num_learning_iterations=1, init_at_random_ep_len=(iteration == 0))
-
-        # 100 iteration마다 단계 통계 출력
-        if (iteration + 1) % 100 == 0:
-            stats = env.get_phase_stats()
-            data_stats = env.get_data_stats()
-            print(f"\n[Iter {iteration + 1}] Phase Stats:")
-            print(f"  APPROACH: {stats['approach']}, ALIGN: {stats['align']}, GRASP: {stats['grasp']}")
-            print(f"  Total Success: {stats['total_success']}")
-            print(f"  Data: {data_stats['collected_count']} episodes, "
-                  f"success rate: {data_stats['success_rate']*100:.2f}%")
+    # 학습 실행
+    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
 
     # =============================================================================
     # 학습 완료
     # =============================================================================
-    runner.save("final_model")
-    print("\n학습 완료! 모델 저장됨.")
+    print("\n학습 완료!")
 
     # 수집된 데이터 저장
-    if env_cfg.collect_data:
-        data_path = env.save_collected_data()
-        final_stats = env.get_data_stats()
+    base_env = env.unwrapped
+    if hasattr(base_env, 'cfg') and base_env.cfg.collect_data:
+        data_path = base_env.save_collected_data()
+        final_stats = base_env.get_data_stats()
         print("\n" + "=" * 60)
         print("Feasibility 데이터 수집 완료!")
         print("=" * 60)
