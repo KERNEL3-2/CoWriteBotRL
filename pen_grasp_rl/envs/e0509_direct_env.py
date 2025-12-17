@@ -24,7 +24,7 @@ from isaaclab.assets import Articulation, ArticulationCfg, RigidObject, RigidObj
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
-from isaaclab.terrains import TerrainImporterCfg
+from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
 from isaaclab.utils.math import sample_uniform
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -236,11 +236,7 @@ class E0509DirectEnv(DirectRLEnv):
         self.scene.rigid_objects["pen"] = self.pen
 
         # 지형 (바닥)
-        terrain_cfg = TerrainImporterCfg(
-            prim_path="/World/ground",
-            terrain_type="plane",
-        )
-        terrain_cfg.func("/World/ground", terrain_cfg)
+        spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
 
         # 조명
         light_cfg = sim_utils.DomeLightCfg(intensity=2500.0, color=(0.75, 0.75, 0.75))

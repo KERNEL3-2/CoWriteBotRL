@@ -140,7 +140,7 @@ def main():
     # =============================================================================
     # Runner 생성
     # =============================================================================
-    log_dir = "./logs/e0509_direct"
+    log_dir = "./pen_grasp_rl/logs/e0509_direct"
     os.makedirs(log_dir, exist_ok=True)
 
     runner = OnPolicyRunner(
