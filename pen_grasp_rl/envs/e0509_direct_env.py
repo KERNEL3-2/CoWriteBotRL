@@ -6,9 +6,12 @@ Manager-Based와 비교하기 위한 Direct 구현
 단계별로 다른 보상을 적용하여 복잡한 작업 학습
 
 === 단계 (Phase) ===
-1. APPROACH: 펜 캡에 접근 (거리 < 10cm 시 전환)
-2. ALIGN: z축 정렬 (dot < -0.8 시 전환)
+1. ALIGN: z축 정렬 먼저 (dot < -0.8 시 전환)
+2. APPROACH: 정렬 유지하면서 접근 (거리 < 10cm 시 전환)
 3. GRASP: 잡기 시도 (거리 < 2cm & dot < -0.9 시 성공)
+
+=== 변경 이유 ===
+멀리서 정렬 → 정렬 유지하며 접근 (가까이서 정렬하기 어려움)
 
 === 사용법 ===
 python train_direct.py --headless --num_envs 4096
@@ -39,14 +42,14 @@ PEN_USD_PATH = os.path.join(_SCRIPT_DIR, "..", "models", "pen.usd")
 
 PEN_LENGTH = 0.1207  # 120.7mm
 
-# 단계 정의
-PHASE_APPROACH = 0
-PHASE_ALIGN = 1
+# 단계 정의 (ALIGN → APPROACH → GRASP 순서)
+PHASE_ALIGN = 0      # 먼저 정렬
+PHASE_APPROACH = 1   # 정렬 유지하며 접근
 PHASE_GRASP = 2
 
 # 단계 전환 조건
-APPROACH_TO_ALIGN_DIST = 0.10  # 10cm 이내면 align 단계로
-ALIGN_TO_GRASP_DOT = -0.8      # dot < -0.8이면 grasp 단계로
+ALIGN_TO_APPROACH_DOT = -0.8   # dot < -0.8이면 approach 단계로
+APPROACH_TO_GRASP_DIST = 0.10  # 10cm 이내면 grasp 단계로
 SUCCESS_DIST = 0.02            # 2cm
 SUCCESS_DOT = -0.9             # dot < -0.9
 
@@ -320,9 +323,18 @@ class E0509DirectEnv(DirectRLEnv):
         # 보상 초기화
         rewards = torch.zeros(self.num_envs, device=self.device)
 
-        # === 단계별 보상 ===
+        # === 단계별 보상 (ALIGN → APPROACH → GRASP) ===
 
-        # APPROACH 단계 (거리 줄이기에 집중)
+        # ALIGN 단계 (먼저 정렬에 집중)
+        align_mask = (self.phase == PHASE_ALIGN)
+        if align_mask.any():
+            # 정렬 보상 (dot이 -1에 가까울수록 좋음)
+            align_reward = (-dot_product[align_mask] - 0.5) / 0.5  # -0.5 ~ -1 → 0 ~ 1
+            rewards[align_mask] += self.cfg.rew_scale_align_dot * torch.clamp(align_reward, min=0)
+            # 약한 거리 페널티 (정렬하면서 너무 멀어지지 않게)
+            rewards[align_mask] += self.cfg.rew_scale_align_dist * distance[align_mask]
+
+        # APPROACH 단계 (정렬 유지하면서 거리 줄이기)
         approach_mask = (self.phase == PHASE_APPROACH)
         if approach_mask.any():
             # 거리 페널티
@@ -330,15 +342,9 @@ class E0509DirectEnv(DirectRLEnv):
             # 거리 감소 보상 (progress)
             progress = self.prev_distance[approach_mask] - distance[approach_mask]
             rewards[approach_mask] += self.cfg.rew_scale_approach_progress * torch.clamp(progress, min=0)
-
-        # ALIGN 단계 (정렬에 집중, 거리 유지)
-        align_mask = (self.phase == PHASE_ALIGN)
-        if align_mask.any():
-            # 거리 유지 페널티
-            rewards[align_mask] += self.cfg.rew_scale_align_dist * distance[align_mask]
-            # 정렬 보상 (dot이 -1에 가까울수록 좋음)
-            align_reward = (-dot_product[align_mask] - 0.5) / 0.5  # -0.5 ~ -1 → 0 ~ 1
-            rewards[align_mask] += self.cfg.rew_scale_align_dot * torch.clamp(align_reward, min=0)
+            # 정렬 유지 보상 (정렬이 풀리면 페널티)
+            alignment_maintain = -dot_product[approach_mask] - 0.7  # dot < -0.7 유지
+            rewards[approach_mask] += 1.0 * torch.clamp(alignment_maintain, min=0)
 
         # GRASP 단계 (최종 접근 + 정렬 유지)
         grasp_mask = (self.phase == PHASE_GRASP)
@@ -350,14 +356,14 @@ class E0509DirectEnv(DirectRLEnv):
 
         # === 단계 전환 체크 및 보상 ===
 
-        # APPROACH → ALIGN
-        transition_to_align = approach_mask & (distance < APPROACH_TO_ALIGN_DIST)
-        if transition_to_align.any():
-            self.phase[transition_to_align] = PHASE_ALIGN
-            rewards[transition_to_align] += self.cfg.rew_scale_phase_transition
+        # ALIGN → APPROACH (정렬 완료 시)
+        transition_to_approach = align_mask & (dot_product < ALIGN_TO_APPROACH_DOT)
+        if transition_to_approach.any():
+            self.phase[transition_to_approach] = PHASE_APPROACH
+            rewards[transition_to_approach] += self.cfg.rew_scale_phase_transition
 
-        # ALIGN → GRASP
-        transition_to_grasp = align_mask & (dot_product < ALIGN_TO_GRASP_DOT)
+        # APPROACH → GRASP (거리 조건 달성 시)
+        transition_to_grasp = approach_mask & (distance < APPROACH_TO_GRASP_DIST)
         if transition_to_grasp.any():
             self.phase[transition_to_grasp] = PHASE_GRASP
             rewards[transition_to_grasp] += self.cfg.rew_scale_phase_transition
@@ -492,8 +498,8 @@ class E0509DirectEnv(DirectRLEnv):
         self.episode_pen_rot[env_ids_tensor] = pen_quat
         self.episode_success[env_ids_tensor] = False
 
-        # 단계 리셋 (APPROACH부터 시작)
-        self.phase[env_ids] = PHASE_APPROACH
+        # 단계 리셋 (ALIGN부터 시작 - 먼저 정렬)
+        self.phase[env_ids] = PHASE_ALIGN
 
         # 이전 거리 초기화
         grasp_pos = self._get_grasp_point()
