@@ -15,6 +15,10 @@
 - E0509DirectEnv: 단계별 상태 머신 환경 (approach → align → grasp)
 - E0509DirectEnvCfg: Direct 환경 설정
 - E0509DirectEnvCfg_PLAY: 테스트/시연용 설정
+
+=== Sim2Real 테스트용 ===
+- SimpleMoveEnv: 간단한 이동 환경 (TCP 5cm 이동 + Home 복귀)
+- SimpleMoveEnvCfg: 환경 설정
 """
 
 from .pen_grasp_env import PenGraspEnv, PenGraspEnvCfg
@@ -22,6 +26,7 @@ from .pen_grasp_env_v2 import PenGraspEnv as PenGraspEnvV2
 from .pen_grasp_env_v2 import PenGraspEnvCfg as PenGraspEnvCfgV2
 from .e0509_reach_env import E0509ReachEnvCfg, E0509ReachEnvCfg_PLAY
 from .e0509_direct_env import E0509DirectEnv, E0509DirectEnvCfg, E0509DirectEnvCfg_PLAY
+from .simple_move_env import SimpleMoveEnv, SimpleMoveEnvCfg, SimpleMoveEnvCfg_PLAY
 
 __all__ = [
     # Manager-Based
@@ -30,4 +35,6 @@ __all__ = [
     "E0509ReachEnvCfg", "E0509ReachEnvCfg_PLAY",
     # Direct
     "E0509DirectEnv", "E0509DirectEnvCfg", "E0509DirectEnvCfg_PLAY",
+    # Sim2Real
+    "SimpleMoveEnv", "SimpleMoveEnvCfg", "SimpleMoveEnvCfg_PLAY",
 ]
