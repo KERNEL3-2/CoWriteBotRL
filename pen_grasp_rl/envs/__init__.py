@@ -19,6 +19,8 @@
 === Sim2Real 테스트용 ===
 - SimpleMoveEnv: 간단한 이동 환경 (TCP 5cm 이동 + Home 복귀)
 - SimpleMoveEnvCfg: 환경 설정
+- TargetTrackingEnv: 랜덤 target 추적 환경 (Visual Servoing)
+- TargetTrackingEnvCfg: 환경 설정
 """
 
 from .pen_grasp_env import PenGraspEnv, PenGraspEnvCfg
@@ -27,6 +29,7 @@ from .pen_grasp_env_v2 import PenGraspEnvCfg as PenGraspEnvCfgV2
 from .e0509_reach_env import E0509ReachEnvCfg, E0509ReachEnvCfg_PLAY
 from .e0509_direct_env import E0509DirectEnv, E0509DirectEnvCfg, E0509DirectEnvCfg_PLAY
 from .simple_move_env import SimpleMoveEnv, SimpleMoveEnvCfg, SimpleMoveEnvCfg_PLAY
+from .target_tracking_env import TargetTrackingEnv, TargetTrackingEnvCfg, TargetTrackingEnvCfg_PLAY
 
 __all__ = [
     # Manager-Based
@@ -37,4 +40,5 @@ __all__ = [
     "E0509DirectEnv", "E0509DirectEnvCfg", "E0509DirectEnvCfg_PLAY",
     # Sim2Real
     "SimpleMoveEnv", "SimpleMoveEnvCfg", "SimpleMoveEnvCfg_PLAY",
+    "TargetTrackingEnv", "TargetTrackingEnvCfg", "TargetTrackingEnvCfg_PLAY",
 ]
