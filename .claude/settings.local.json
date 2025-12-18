@@ -60,7 +60,8 @@
       "Bash(pen_grasp_rl/envs/e0509_reach_env.py )",
       "Bash(pen_grasp_rl/scripts/train_reach.py )",
       "Bash(pen_grasp_rl/scripts/play_reach.py )",
-      "Bash(REACH_LOG.md)"
+      "Bash(REACH_LOG.md)",
+      "Bash(sudo apt install:*)"
     ]
   }
 }
