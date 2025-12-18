@@ -1,17 +1,17 @@
 """
-E0509 Direct 환경 (단계별 상태 머신)
+E0509 Direct 환경 (Pre-grasp 방식 + 특이점 회피)
 
 === 목표 ===
-Manager-Based와 비교하기 위한 Direct 구현
-단계별로 다른 보상을 적용하여 복잡한 작업 학습
+펜 캡을 정확하게 잡기 위한 Pre-grasp 접근 전략
 
 === 단계 (Phase) ===
-1. ALIGN: z축 정렬 먼저 (dot < -0.8 시 전환)
-2. APPROACH: 정렬 유지하면서 접근 (거리 < 10cm 시 전환)
-3. GRASP: 잡기 시도 (거리 < 2cm & dot < -0.9 시 성공)
+1. PRE_GRASP: 펜캡 위 7cm 위치로 이동 + Z축 정렬 (dot < -0.95)
+2. DESCEND: 정렬 유지하며 수직 하강 (거리 < 2cm & dot < -0.95 시 성공)
 
-=== 변경 이유 ===
-멀리서 정렬 → 정렬 유지하며 접근 (가까이서 정렬하기 어려움)
+=== 핵심 개선 ===
+- Pre-grasp 위치에서 충분히 정렬한 후 수직 하강
+- 특이점 회피 페널티 (joint 3, 5 근처)
+- 더 엄격한 정렬 조건 (dot < -0.95 = 약 18도 이내)
 
 === 사용법 ===
 python train_direct.py --headless --num_envs 4096
@@ -42,16 +42,24 @@ PEN_USD_PATH = os.path.join(_SCRIPT_DIR, "..", "models", "pen.usd")
 
 PEN_LENGTH = 0.1207  # 120.7mm
 
-# 단계 정의 (ALIGN → APPROACH → GRASP 순서)
-PHASE_ALIGN = 0      # 먼저 정렬
-PHASE_APPROACH = 1   # 정렬 유지하며 접근
-PHASE_GRASP = 2
+# 단계 정의 (PRE_GRASP → DESCEND)
+PHASE_PRE_GRASP = 0   # 펜캡 위 7cm + 정렬
+PHASE_DESCEND = 1     # 수직 하강
+
+# Pre-grasp 설정
+PRE_GRASP_HEIGHT = 0.07  # 펜캡 위 7cm
 
 # 단계 전환 조건
-ALIGN_TO_APPROACH_DOT = -0.8   # dot < -0.8이면 approach 단계로
-APPROACH_TO_GRASP_DIST = 0.10  # 10cm 이내면 grasp 단계로
-SUCCESS_DIST = 0.02            # 2cm
-SUCCESS_DOT = -0.9             # dot < -0.9
+PRE_GRASP_TO_DESCEND_DIST = 0.03   # pre-grasp 위치에서 3cm 이내
+PRE_GRASP_TO_DESCEND_DOT = -0.95   # 정렬 조건 (약 18도 이내)
+
+# 성공 조건 (더 엄격하게)
+SUCCESS_DIST = 0.02     # 2cm
+SUCCESS_DOT = -0.95     # dot < -0.95
+
+# 특이점 회피 설정 (라디안)
+SINGULARITY_JOINT3_THRESHOLD = 0.15  # joint 3이 0 근처 (완전히 펴짐)
+SINGULARITY_JOINT5_THRESHOLD = 0.15  # joint 5가 0 근처 (손목 특이점)
 
 
 # =============================================================================
@@ -173,21 +181,32 @@ class E0509DirectEnvCfg(DirectRLEnvCfg):
     collect_data = False  # 2단계에서 True로 변경
     data_save_path = "./logs/feasibility_data"  # 저장 경로
 
-    # 보상 스케일
-    rew_scale_approach_dist = -2.0      # 접근 단계: 거리 페널티
-    rew_scale_approach_progress = 5.0   # 접근 단계: 거리 감소 보상
-    rew_scale_align_dist = -1.0         # 정렬 단계: 거리 유지 페널티
-    rew_scale_align_dot = 2.0           # 정렬 단계: 정렬 보상
-    rew_scale_grasp_dist = -3.0         # 잡기 단계: 거리 페널티
-    rew_scale_grasp_dot = 1.0           # 잡기 단계: 정렬 유지 보상
-    rew_scale_success = 100.0           # 성공 보상
-    rew_scale_phase_transition = 10.0   # 단계 전환 보상
-    rew_scale_action = -0.001           # 액션 페널티
-    rew_scale_wrong_direction = -1.0    # dot 양수(반대 방향) 페널티
+    # 보상 스케일 (Pre-grasp 방식)
+    # PRE_GRASP 단계
+    rew_scale_pregrasp_dist = -2.0       # pre-grasp 위치까지 거리 페널티
+    rew_scale_pregrasp_progress = 5.0    # 거리 감소 보상
+    rew_scale_pregrasp_align = 3.0       # 정렬 보상 (강화)
+
+    # DESCEND 단계
+    rew_scale_descend_dist = -3.0        # 펜캡까지 거리 페널티
+    rew_scale_descend_align = 5.0        # 정렬 유지 보상 (매우 중요)
+    rew_scale_descend_progress = 3.0     # 하강 진행 보상
+
+    # 공통
+    rew_scale_success = 150.0            # 성공 보상 (증가)
+    rew_scale_phase_transition = 20.0    # 단계 전환 보상 (증가)
+    rew_scale_action = -0.001            # 액션 페널티
+    rew_scale_singularity = -2.0         # 특이점 페널티
+    rew_scale_wrong_direction = -1.0     # dot 양수(반대 방향) 페널티
+
+    # 지수적 정렬 보상 설정
+    rew_scale_exponential_align = 2.0    # 지수적 정렬 보너스 스케일
+    exponential_align_threshold = 0.9    # dot < -0.9부터 지수 보너스 시작
+    exponential_align_scale = 20.0       # 지수 증가 속도
 
 
 class E0509DirectEnv(DirectRLEnv):
-    """E0509 Direct 환경 (단계별 상태 머신)"""
+    """E0509 Direct 환경 (Pre-grasp 방식 + 특이점 회피)"""
 
     cfg: E0509DirectEnvCfg
 
@@ -205,17 +224,19 @@ class E0509DirectEnv(DirectRLEnv):
         self.robot_dof_lower_limits = self.robot.data.soft_joint_pos_limits[0, :6, 0]
         self.robot_dof_upper_limits = self.robot.data.soft_joint_pos_limits[0, :6, 1]
 
-        # 상태 머신: 각 환경의 현재 단계
+        # 상태 머신: 각 환경의 현재 단계 (2단계: PRE_GRASP, DESCEND)
         self.phase = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
 
-        # 이전 거리 (progress 보상용)
-        self.prev_distance = torch.zeros(self.num_envs, device=self.device)
+        # 이전 거리 (progress 보상용) - pre-grasp 위치까지
+        self.prev_distance_to_pregrasp = torch.zeros(self.num_envs, device=self.device)
+        # 이전 거리 (descend 단계) - 펜캡까지
+        self.prev_distance_to_cap = torch.zeros(self.num_envs, device=self.device)
 
         # 성공 카운터
         self.success_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
 
-        # 단계별 통계
-        self.phase_counts = torch.zeros(3, device=self.device, dtype=torch.long)
+        # 단계별 통계 (2단계)
+        self.phase_counts = torch.zeros(2, device=self.device, dtype=torch.long)
 
         # === 데이터 수집용 버퍼 ===
         # 각 환경의 에피소드 시작 시 펜 상태 저장
@@ -310,80 +331,131 @@ class E0509DirectEnv(DirectRLEnv):
         return {"policy": obs}
 
     def _get_rewards(self) -> torch.Tensor:
-        """단계별 보상 계산"""
+        """Pre-grasp 방식 단계별 보상 계산"""
         # 현재 상태 계산
         grasp_pos = self._get_grasp_point()
         cap_pos = self._get_pen_cap_pos()
+        pregrasp_pos = self._get_pregrasp_pos()  # 펜캡 위 7cm
         gripper_z = self._get_gripper_z_axis()
         pen_z = self._get_pen_z_axis()
 
-        distance = torch.norm(grasp_pos - cap_pos, dim=-1)
+        # 거리 계산
+        distance_to_pregrasp = torch.norm(grasp_pos - pregrasp_pos, dim=-1)
+        distance_to_cap = torch.norm(grasp_pos - cap_pos, dim=-1)
         dot_product = torch.sum(gripper_z * pen_z, dim=-1)
+
+        # 관절 상태 (특이점 체크용)
+        joint_pos = self.robot.data.joint_pos[:, :6]
 
         # 보상 초기화
         rewards = torch.zeros(self.num_envs, device=self.device)
 
-        # === 단계별 보상 (ALIGN → APPROACH → GRASP) ===
+        # =========================================================
+        # 지수적 정렬 보너스 계산 (공통으로 사용)
+        # dot < -0.9일 때부터 급격히 증가
+        # dot = -0.9 → bonus ≈ 1
+        # dot = -0.95 → bonus ≈ 2.7
+        # dot = -0.99 → bonus ≈ 7.4
+        # dot = -0.999 → bonus ≈ 20
+        # =========================================================
+        align_value = -dot_product  # 0 ~ 1
+        exponential_bonus = torch.where(
+            align_value > self.cfg.exponential_align_threshold,
+            torch.exp((align_value - self.cfg.exponential_align_threshold) * self.cfg.exponential_align_scale),
+            torch.ones_like(align_value)
+        )
 
-        # ALIGN 단계 (먼저 정렬에 집중)
-        align_mask = (self.phase == PHASE_ALIGN)
-        if align_mask.any():
-            # 정렬 보상 (dot이 -1에 가까울수록 좋음)
-            align_reward = (-dot_product[align_mask] - 0.5) / 0.5  # -0.5 ~ -1 → 0 ~ 1
-            rewards[align_mask] += self.cfg.rew_scale_align_dot * torch.clamp(align_reward, min=0)
-            # 약한 거리 페널티 (정렬하면서 너무 멀어지지 않게)
-            rewards[align_mask] += self.cfg.rew_scale_align_dist * distance[align_mask]
+        # =========================================================
+        # PRE_GRASP 단계: pre-grasp 위치로 이동 + 정렬
+        # =========================================================
+        pregrasp_mask = (self.phase == PHASE_PRE_GRASP)
+        if pregrasp_mask.any():
+            # 1. Pre-grasp 위치까지 거리 페널티
+            rewards[pregrasp_mask] += self.cfg.rew_scale_pregrasp_dist * distance_to_pregrasp[pregrasp_mask]
 
-        # APPROACH 단계 (정렬 유지하면서 거리 줄이기)
-        approach_mask = (self.phase == PHASE_APPROACH)
-        if approach_mask.any():
-            # 거리 페널티
-            rewards[approach_mask] += self.cfg.rew_scale_approach_dist * distance[approach_mask]
-            # 거리 감소 보상 (progress)
-            progress = self.prev_distance[approach_mask] - distance[approach_mask]
-            rewards[approach_mask] += self.cfg.rew_scale_approach_progress * torch.clamp(progress, min=0)
-            # 정렬 유지 보상 (정렬이 풀리면 페널티)
-            alignment_maintain = -dot_product[approach_mask] - 0.7  # dot < -0.7 유지
-            rewards[approach_mask] += 1.0 * torch.clamp(alignment_maintain, min=0)
+            # 2. 거리 감소 보상 (progress)
+            progress = self.prev_distance_to_pregrasp[pregrasp_mask] - distance_to_pregrasp[pregrasp_mask]
+            rewards[pregrasp_mask] += self.cfg.rew_scale_pregrasp_progress * torch.clamp(progress, min=0)
 
-        # GRASP 단계 (최종 접근 + 정렬 유지)
-        grasp_mask = (self.phase == PHASE_GRASP)
-        if grasp_mask.any():
-            # 거리 페널티 (더 강하게)
-            rewards[grasp_mask] += self.cfg.rew_scale_grasp_dist * distance[grasp_mask]
-            # 정렬 유지 보상
-            rewards[grasp_mask] += self.cfg.rew_scale_grasp_dot * (-dot_product[grasp_mask])
+            # 3. 기본 정렬 보상 (dot이 -1에 가까울수록 좋음)
+            align_quality = (-dot_product[pregrasp_mask] - 0.5) / 0.5  # 0 ~ 1
+            rewards[pregrasp_mask] += self.cfg.rew_scale_pregrasp_align * torch.clamp(align_quality, min=0)
 
-        # === 단계 전환 체크 및 보상 ===
+            # 4. 지수적 정렬 보너스 (dot < -0.9일 때 급격히 증가)
+            rewards[pregrasp_mask] += self.cfg.rew_scale_exponential_align * exponential_bonus[pregrasp_mask]
 
-        # ALIGN → APPROACH (정렬 완료 시)
-        transition_to_approach = align_mask & (dot_product < ALIGN_TO_APPROACH_DOT)
-        if transition_to_approach.any():
-            self.phase[transition_to_approach] = PHASE_APPROACH
-            rewards[transition_to_approach] += self.cfg.rew_scale_phase_transition
+        # =========================================================
+        # DESCEND 단계: 정렬 유지하며 수직 하강
+        # =========================================================
+        descend_mask = (self.phase == PHASE_DESCEND)
+        if descend_mask.any():
+            # 1. 펜캡까지 거리 페널티
+            rewards[descend_mask] += self.cfg.rew_scale_descend_dist * distance_to_cap[descend_mask]
 
-        # APPROACH → GRASP (거리 조건 달성 시)
-        transition_to_grasp = approach_mask & (distance < APPROACH_TO_GRASP_DIST)
-        if transition_to_grasp.any():
-            self.phase[transition_to_grasp] = PHASE_GRASP
-            rewards[transition_to_grasp] += self.cfg.rew_scale_phase_transition
+            # 2. 기본 정렬 유지 보상
+            align_maintain = -dot_product[descend_mask]  # 0 ~ 1
+            rewards[descend_mask] += self.cfg.rew_scale_descend_align * align_maintain
 
-        # === 성공 보상 ===
-        success = (distance < SUCCESS_DIST) & (dot_product < SUCCESS_DOT)
+            # 3. 지수적 정렬 보너스 (descend에서 더 중요!)
+            rewards[descend_mask] += self.cfg.rew_scale_exponential_align * 2.0 * exponential_bonus[descend_mask]
+
+            # 4. 하강 진행 보상
+            descend_progress = self.prev_distance_to_cap[descend_mask] - distance_to_cap[descend_mask]
+            rewards[descend_mask] += self.cfg.rew_scale_descend_progress * torch.clamp(descend_progress, min=0)
+
+            # 5. 정렬이 풀리면 강한 페널티 (dot > -0.9이면 페널티)
+            align_lost = dot_product[descend_mask] > -0.9
+            if align_lost.any():
+                descend_indices = torch.where(descend_mask)[0]
+                lost_indices = descend_indices[align_lost]
+                rewards[lost_indices] -= 5.0  # 강한 페널티 (증가)
+
+        # =========================================================
+        # 단계 전환 체크 및 보상
+        # =========================================================
+        # PRE_GRASP → DESCEND (pre-grasp 위치 도달 + 정렬 완료)
+        transition_to_descend = pregrasp_mask & (distance_to_pregrasp < PRE_GRASP_TO_DESCEND_DIST) & (dot_product < PRE_GRASP_TO_DESCEND_DOT)
+        if transition_to_descend.any():
+            self.phase[transition_to_descend] = PHASE_DESCEND
+            rewards[transition_to_descend] += self.cfg.rew_scale_phase_transition
+            # descend 시작 시 cap까지 거리 초기화
+            self.prev_distance_to_cap[transition_to_descend] = distance_to_cap[transition_to_descend]
+
+        # =========================================================
+        # 성공 보상
+        # =========================================================
+        success = (distance_to_cap < SUCCESS_DIST) & (dot_product < SUCCESS_DOT)
         rewards[success] += self.cfg.rew_scale_success
         self.success_count[success] += 1
 
-        # === 액션 페널티 ===
+        # =========================================================
+        # 특이점 회피 페널티
+        # =========================================================
+        # Joint 3 (팔꿈치) - 완전히 펴지면 특이점
+        joint3_near_singularity = torch.abs(joint_pos[:, 2]) < SINGULARITY_JOINT3_THRESHOLD
+        rewards[joint3_near_singularity] += self.cfg.rew_scale_singularity
+
+        # Joint 5 (손목) - 0 근처에서 특이점
+        joint5_near_singularity = torch.abs(joint_pos[:, 4]) < SINGULARITY_JOINT5_THRESHOLD
+        rewards[joint5_near_singularity] += self.cfg.rew_scale_singularity
+
+        # =========================================================
+        # 공통 페널티
+        # =========================================================
+        # 액션 페널티
         rewards += self.cfg.rew_scale_action * torch.sum(torch.square(self.actions), dim=-1)
 
-        # === 반대 방향 페널티 (dot > 0이면 페널티) ===
+        # 반대 방향 페널티 (dot > 0이면 페널티)
         wrong_direction_mask = dot_product > 0
         if wrong_direction_mask.any():
-            # dot이 양수일 때: dot 값에 비례한 페널티
             rewards[wrong_direction_mask] += self.cfg.rew_scale_wrong_direction * dot_product[wrong_direction_mask]
 
+        # =========================================================
         # 이전 거리 업데이트
-        self.prev_distance = distance.clone()
+        # =========================================================
+        self.prev_distance_to_pregrasp = distance_to_pregrasp.clone()
+        # descend 단계인 환경만 cap 거리 업데이트
+        self.prev_distance_to_cap[descend_mask] = distance_to_cap[descend_mask]
 
         return rewards
 
@@ -419,7 +491,7 @@ class E0509DirectEnv(DirectRLEnv):
         super()._reset_idx(env_ids)
 
         # 단계 통계 업데이트 (리셋 전)
-        for phase in range(3):
+        for phase in range(2):
             self.phase_counts[phase] += (self.phase[env_ids_tensor] == phase).sum()
 
         # 로봇 리셋 (랜덤 오프셋)
@@ -498,13 +570,18 @@ class E0509DirectEnv(DirectRLEnv):
         self.episode_pen_rot[env_ids_tensor] = pen_quat
         self.episode_success[env_ids_tensor] = False
 
-        # 단계 리셋 (ALIGN부터 시작 - 먼저 정렬)
-        self.phase[env_ids] = PHASE_ALIGN
+        # 단계 리셋 (PRE_GRASP부터 시작)
+        self.phase[env_ids] = PHASE_PRE_GRASP
 
-        # 이전 거리 초기화
+        # 이전 거리 초기화 (pre-grasp 위치까지)
         grasp_pos = self._get_grasp_point()
+        pregrasp_pos = self._get_pregrasp_pos()
         cap_pos = self._get_pen_cap_pos()
-        self.prev_distance[env_ids] = torch.norm(
+
+        self.prev_distance_to_pregrasp[env_ids] = torch.norm(
+            grasp_pos[env_ids] - pregrasp_pos[env_ids], dim=-1
+        )
+        self.prev_distance_to_cap[env_ids] = torch.norm(
             grasp_pos[env_ids] - cap_pos[env_ids], dim=-1
         )
 
@@ -545,6 +622,14 @@ class E0509DirectEnv(DirectRLEnv):
 
         return pen_pos + (PEN_LENGTH / 2) * cap_dir
 
+    def _get_pregrasp_pos(self) -> torch.Tensor:
+        """Pre-grasp 위치 (펜캡 위 7cm, 펜 Z축 방향)"""
+        cap_pos = self._get_pen_cap_pos()
+        pen_z = self._get_pen_z_axis()
+
+        # 펜캡에서 펜 Z축 방향으로 PRE_GRASP_HEIGHT만큼 위
+        return cap_pos + PRE_GRASP_HEIGHT * pen_z
+
     def _get_gripper_z_axis(self) -> torch.Tensor:
         """그리퍼 Z축 방향"""
         link6_quat = self.robot.data.body_quat_w[:, 6, :]
@@ -569,11 +654,10 @@ class E0509DirectEnv(DirectRLEnv):
 
     def get_phase_stats(self) -> dict:
         """단계별 통계 반환"""
-        current_phases = torch.bincount(self.phase, minlength=3)
+        current_phases = torch.bincount(self.phase, minlength=2)
         return {
-            "approach": current_phases[0].item(),
-            "align": current_phases[1].item(),
-            "grasp": current_phases[2].item(),
+            "pre_grasp": current_phases[0].item(),
+            "descend": current_phases[1].item(),
             "total_success": self.success_count.sum().item(),
         }
 

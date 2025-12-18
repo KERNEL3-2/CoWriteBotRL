@@ -39,10 +39,27 @@ simulation_app = app_launcher.app
 
 # Isaac Sim 실행 후 import
 import torch
+import torch.nn as nn
 from envs.e0509_direct_env import E0509DirectEnv, E0509DirectEnvCfg_PLAY
 
-# RSL-RL
-from rsl_rl.modules import ActorCritic
+
+class SimpleActor(nn.Module):
+    """학습된 Actor 네트워크 (추론용)"""
+    def __init__(self, obs_dim, action_dim, hidden_dims=[256, 256, 128]):
+        super().__init__()
+
+        layers = []
+        in_dim = obs_dim
+        for h_dim in hidden_dims:
+            layers.append(nn.Linear(in_dim, h_dim))
+            layers.append(nn.ELU())
+            in_dim = h_dim
+        layers.append(nn.Linear(in_dim, action_dim))
+
+        self.actor = nn.Sequential(*layers)
+
+    def forward(self, obs):
+        return self.actor(obs)
 
 
 def main():
@@ -58,28 +75,27 @@ def main():
     env = E0509DirectEnv(cfg=env_cfg)
 
     # =============================================================================
-    # 모델 로드
+    # 모델 로드 (직접 로드)
     # =============================================================================
     print(f"모델 로드: {args.checkpoint}")
 
     # 체크포인트 로드
     checkpoint = torch.load(args.checkpoint, map_location="cuda:0")
+    state_dict = checkpoint["model_state_dict"]
 
-    # Actor-Critic 네트워크 생성
+    # Actor 네트워크 생성 (학습 시 사용한 구조와 동일)
     obs_dim = env_cfg.observation_space
     action_dim = env_cfg.action_space
 
-    policy = ActorCritic(
-        num_actor_obs=obs_dim,
-        num_critic_obs=obs_dim,
-        num_actions=action_dim,
-        actor_hidden_dims=[256, 256, 128],
-        critic_hidden_dims=[256, 256, 128],
-        activation="elu",
-    ).to("cuda:0")
+    policy = SimpleActor(obs_dim, action_dim, hidden_dims=[256, 256, 128]).to("cuda:0")
 
-    # 가중치 로드
-    policy.load_state_dict(checkpoint["model_state_dict"])
+    # Actor 가중치만 추출해서 로드
+    actor_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith("actor."):
+            actor_state_dict[k] = v
+
+    policy.load_state_dict(actor_state_dict)
     policy.eval()
 
     print("=" * 60)
@@ -87,8 +103,8 @@ def main():
     print("=" * 60)
     print(f"  환경 수: {args.num_envs}")
     print(f"  실행 스텝: {args.num_steps}")
-    print(f"  관찰 차원: {obs_dim}")
-    print(f"  액션 차원: {action_dim}")
+    print(f"  관찰 차원: {env_cfg.observation_space}")
+    print(f"  액션 차원: {env_cfg.action_space}")
     print("=" * 60)
 
     # =============================================================================
@@ -98,11 +114,11 @@ def main():
     obs = obs_dict["policy"]
 
     total_success = 0
-    phase_transitions = {"to_align": 0, "to_grasp": 0}
 
     for step in range(args.num_steps):
         with torch.no_grad():
-            actions = policy.act_inference(obs)
+            # policy는 함수로 반환됨
+            actions = policy(obs)
 
         obs_dict, rewards, terminated, truncated, infos = env.step(actions)
         obs = obs_dict["policy"]
@@ -114,7 +130,7 @@ def main():
             stats = env.get_phase_stats()
             mean_reward = rewards.mean().item()
             print(f"Step {step}: reward={mean_reward:.4f}, "
-                  f"phases=[A:{stats['approach']}, L:{stats['align']}, G:{stats['grasp']}], "
+                  f"phases=[PRE:{stats['pre_grasp']}, DESC:{stats['descend']}], "
                   f"success={stats['total_success']}")
 
     # =============================================================================
@@ -125,8 +141,8 @@ def main():
     print("테스트 완료!")
     print("=" * 60)
     print(f"총 성공 횟수: {final_stats['total_success']}")
-    print(f"최종 단계 분포: APPROACH={final_stats['approach']}, "
-          f"ALIGN={final_stats['align']}, GRASP={final_stats['grasp']}")
+    print(f"최종 단계 분포: PRE_GRASP={final_stats['pre_grasp']}, "
+          f"DESCEND={final_stats['descend']}")
     print("=" * 60)
 
     env.close()
