@@ -428,7 +428,7 @@ python pen_grasp_rl/scripts/play_direct.py --checkpoint /path/to/model.pt --num_
 
 **학습 그래프**:
 
-![E0509 Direct V5 Training Analysis](images/e0509_direct_analysis.png)
+![E0509 Direct V5 Training](images/e0509_direct_v5_training.png)
 
 **문제점 발견** (시뮬레이션 테스트):
 - **그리퍼가 아래에서 위로 올려다보는 자세**로 학습됨
