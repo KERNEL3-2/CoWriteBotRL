@@ -181,28 +181,28 @@ class E0509DirectEnvCfg(DirectRLEnvCfg):
     collect_data = False  # 2단계에서 True로 변경
     data_save_path = "./logs/feasibility_data"  # 저장 경로
 
-    # 보상 스케일 (Pre-grasp 방식)
+    # 보상 스케일 (Pre-grasp 방식) - 밸런스 조정됨
     # PRE_GRASP 단계
-    rew_scale_pregrasp_dist = -2.0       # pre-grasp 위치까지 거리 페널티
-    rew_scale_pregrasp_progress = 5.0    # 거리 감소 보상
-    rew_scale_pregrasp_align = 3.0       # 정렬 보상 (강화)
+    rew_scale_pregrasp_dist = -8.0       # pre-grasp 위치까지 거리 페널티 (강화)
+    rew_scale_pregrasp_progress = 20.0   # 거리 감소 보상 (강화)
+    rew_scale_pregrasp_align = 1.5       # 정렬 보상 (축소)
 
     # DESCEND 단계
-    rew_scale_descend_dist = -3.0        # 펜캡까지 거리 페널티
-    rew_scale_descend_align = 5.0        # 정렬 유지 보상 (매우 중요)
-    rew_scale_descend_progress = 3.0     # 하강 진행 보상
+    rew_scale_descend_dist = -10.0       # 펜캡까지 거리 페널티 (강화)
+    rew_scale_descend_align = 2.0        # 정렬 유지 보상 (축소)
+    rew_scale_descend_progress = 15.0    # 하강 진행 보상 (강화)
 
     # 공통
-    rew_scale_success = 150.0            # 성공 보상 (증가)
-    rew_scale_phase_transition = 20.0    # 단계 전환 보상 (증가)
-    rew_scale_action = -0.001            # 액션 페널티
-    rew_scale_singularity = -2.0         # 특이점 페널티
-    rew_scale_wrong_direction = -1.0     # dot 양수(반대 방향) 페널티
+    rew_scale_success = 100.0            # 성공 보상
+    rew_scale_phase_transition = 15.0    # 단계 전환 보상
+    rew_scale_action = -0.01             # 액션 페널티 (증가)
+    rew_scale_singularity = -1.0         # 특이점 페널티
+    rew_scale_wrong_direction = -2.0     # dot 양수(반대 방향) 페널티 (증가)
 
-    # 지수적 정렬 보상 설정
-    rew_scale_exponential_align = 2.0    # 지수적 정렬 보너스 스케일
+    # 지수적 정렬 보상 설정 (대폭 축소)
+    rew_scale_exponential_align = 0.3    # 지수적 정렬 보너스 스케일 (2.0 → 0.3)
     exponential_align_threshold = 0.9    # dot < -0.9부터 지수 보너스 시작
-    exponential_align_scale = 20.0       # 지수 증가 속도
+    exponential_align_scale = 10.0       # 지수 증가 속도 (20.0 → 10.0)
 
 
 class E0509DirectEnv(DirectRLEnv):
@@ -396,8 +396,8 @@ class E0509DirectEnv(DirectRLEnv):
             align_maintain = -dot_product[descend_mask]  # 0 ~ 1
             rewards[descend_mask] += self.cfg.rew_scale_descend_align * align_maintain
 
-            # 3. 지수적 정렬 보너스 (descend에서 더 중요!)
-            rewards[descend_mask] += self.cfg.rew_scale_exponential_align * 2.0 * exponential_bonus[descend_mask]
+            # 3. 지수적 정렬 보너스
+            rewards[descend_mask] += self.cfg.rew_scale_exponential_align * exponential_bonus[descend_mask]
 
             # 4. 하강 진행 보상
             descend_progress = self.prev_distance_to_cap[descend_mask] - distance_to_cap[descend_mask]
