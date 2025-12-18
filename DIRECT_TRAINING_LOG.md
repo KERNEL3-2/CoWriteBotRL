@@ -283,6 +283,10 @@ python pen_grasp_rl/scripts/play_direct.py --checkpoint /path/to/model.pt --num_
 | 5827 | **318.0** | 359 | - | 최고 리워드 (타임아웃) |
 | 33000 | 129.0 | 24.1 | - | 수렴 (빠른 성공) |
 
+**학습 그래프**:
+
+![E0509 Direct V2 Training](images/e0509_direct_v2_training.png)
+
 **핵심 분석**:
 
 | 지표 | 최고점 (step 5827) | 수렴점 (step 33000) |
