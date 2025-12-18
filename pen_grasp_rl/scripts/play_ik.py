@@ -130,7 +130,7 @@ def main():
             stats = env.get_phase_stats()
             mean_reward = rewards.mean().item()
             print(f"Step {step}: reward={mean_reward:.4f}, "
-                  f"phases=[PRE:{stats['pre_grasp']}, DESC:{stats['descend']}], "
+                  f"phases=[PRE:{stats['pre_grasp']}, ALN:{stats['align']}, DESC:{stats['descend']}], "
                   f"success={stats['total_success']}")
 
     # =============================================================================
@@ -142,7 +142,7 @@ def main():
     print("=" * 60)
     print(f"총 성공 횟수: {final_stats['total_success']}")
     print(f"최종 단계 분포: PRE_GRASP={final_stats['pre_grasp']}, "
-          f"DESCEND={final_stats['descend']}")
+          f"ALIGN={final_stats['align']}, DESCEND={final_stats['descend']}")
     print("=" * 60)
 
     env.close()

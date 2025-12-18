@@ -1,18 +1,22 @@
 """
-E0509 IK 환경 (Task Space Control)
+E0509 IK 환경 V2 (Task Space Control + ALIGN 단계)
 
 === 목표 ===
 IK(Inverse Kinematics)를 사용하여 Task Space에서 직접 제어
 그리퍼가 위에서 아래로 내려다보는 자세로 접근하도록 유도
 
+=== 단계 (Phase) ===
+1. PRE_GRASP: 펜캡 위 7cm 위치로 이동 (정렬 조건 없음)
+2. ALIGN: 위치 유지하며 자세 정렬에 집중 (dot < -0.95)
+3. DESCEND: 정렬 유지하며 수직 하강 (거리 < 2cm & dot < -0.95 시 성공)
+
 === 액션 공간 ===
 [Δx, Δy, Δz, Δroll, Δpitch, Δyaw] (6차원)
 - 상대적인 end-effector 위치/자세 변화량
 
-=== 장점 ===
-- 직관적인 액션 공간 (Task space)
-- 초기 자세를 강제할 수 있음 (위에서 내려다보기)
-- Sim2Real 전환 용이
+=== V2 변경사항 ===
+- ALIGN 단계 추가: 위치 도달 후 자세 정렬에 집중
+- 펜 캡 위치 기준으로 생성 범위 지정
 
 === 사용법 ===
 python train_ik.py --headless --num_envs 4096
@@ -48,16 +52,17 @@ PEN_USD_PATH = os.path.join(_SCRIPT_DIR, "..", "models", "pen.usd")
 
 PEN_LENGTH = 0.1207  # 120.7mm
 
-# 단계 정의 (PRE_GRASP → DESCEND)
-PHASE_PRE_GRASP = 0   # 펜캡 위 7cm + 정렬
-PHASE_DESCEND = 1     # 수직 하강
+# 단계 정의 (PRE_GRASP → ALIGN → DESCEND)
+PHASE_PRE_GRASP = 0   # 펜캡 위 7cm로 이동 (정렬 조건 없음)
+PHASE_ALIGN = 1       # 위치 유지 + 자세 정렬
+PHASE_DESCEND = 2     # 수직 하강
 
 # Pre-grasp 설정
 PRE_GRASP_HEIGHT = 0.07  # 펜캡 위 7cm
 
 # 단계 전환 조건
-PRE_GRASP_TO_DESCEND_DIST = 0.03   # pre-grasp 위치에서 3cm 이내
-PRE_GRASP_TO_DESCEND_DOT = -0.95   # 정렬 조건 (약 18도 이내)
+PRE_GRASP_TO_ALIGN_DIST = 0.03    # pre-grasp 위치에서 3cm 이내 (정렬 조건 없음!)
+ALIGN_TO_DESCEND_DOT = -0.95      # 정렬 완료 조건 (약 18도 이내)
 
 # 성공 조건
 SUCCESS_DIST = 0.02     # 2cm
@@ -156,11 +161,12 @@ class E0509IKEnvCfg(DirectRLEnvCfg):
         ),
     )
 
-    # 목표 위치 범위 (펜 리셋용)
-    pen_pos_range = {
+    # 펜 캡 위치 범위 (캡 기준으로 지정!)
+    # 로봇이 위에서 접근하기 쉬운 높이로 제한
+    pen_cap_pos_range = {
         "x": (0.3, 0.5),
-        "y": (-0.20, 0.20),
-        "z": (0.20, 0.50),
+        "y": (-0.15, 0.15),
+        "z": (0.25, 0.40),  # 캡이 이 높이에 오도록 (너무 높으면 접근 어려움)
     }
 
     # 펜 방향 랜덤화 (1단계: 고정)
@@ -180,20 +186,29 @@ class E0509IKEnvCfg(DirectRLEnvCfg):
     # End-effector offset (그리퍼 끝까지의 오프셋)
     ee_offset_pos = [0.0, 0.0, 0.15]  # Z 방향으로 15cm (그리퍼 길이)
 
-    # 보상 스케일 (기존과 동일)
+    # 보상 스케일 (3단계: PRE_GRASP → ALIGN → DESCEND)
+    # PRE_GRASP 단계: 위치 접근에 집중
     rew_scale_pregrasp_dist = -8.0
     rew_scale_pregrasp_progress = 20.0
-    rew_scale_pregrasp_align = 1.5
+    rew_scale_pregrasp_align = 0.5      # 약한 정렬 보상 (위치 우선)
+
+    # ALIGN 단계: 자세 정렬에 집중
+    rew_scale_align_position_hold = -5.0   # 위치 유지 페널티 (벗어나면 페널티)
+    rew_scale_align_orientation = 5.0      # 정렬 보상 (강화)
+    rew_scale_exponential_align = 1.0      # 지수적 정렬 보너스 (강화)
+    exponential_align_threshold = 0.85     # dot < -0.85부터 보너스
+    exponential_align_scale = 15.0         # 더 급격한 증가
+
+    # DESCEND 단계: 하강에 집중
     rew_scale_descend_dist = -10.0
     rew_scale_descend_align = 2.0
     rew_scale_descend_progress = 15.0
+
+    # 공통
     rew_scale_success = 100.0
-    rew_scale_phase_transition = 15.0
+    rew_scale_phase_transition = 20.0      # 단계 전환 보상 증가
     rew_scale_action = -0.01
     rew_scale_wrong_direction = -2.0
-    rew_scale_exponential_align = 0.3
-    exponential_align_threshold = 0.9
-    exponential_align_scale = 10.0
 
 
 class E0509IKEnv(DirectRLEnv):
@@ -254,12 +269,15 @@ class E0509IKEnv(DirectRLEnv):
         self.robot_dof_lower_limits = self.robot.data.soft_joint_pos_limits[0, :6, 0]
         self.robot_dof_upper_limits = self.robot.data.soft_joint_pos_limits[0, :6, 1]
 
-        # 상태 머신
+        # 상태 머신 (3단계)
         self.phase = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
 
         # 이전 거리 (progress 보상용)
         self.prev_distance_to_pregrasp = torch.zeros(self.num_envs, device=self.device)
         self.prev_distance_to_cap = torch.zeros(self.num_envs, device=self.device)
+
+        # ALIGN 단계에서 기준 위치 (pre-grasp 위치 저장)
+        self.align_target_pos = torch.zeros(self.num_envs, 3, device=self.device)
 
         # 성공 카운터
         self.success_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
@@ -407,7 +425,7 @@ class E0509IKEnv(DirectRLEnv):
         return {"policy": obs}
 
     def _get_rewards(self) -> torch.Tensor:
-        """Pre-grasp 방식 단계별 보상 계산 (기존과 동일)"""
+        """3단계 보상 계산 (PRE_GRASP → ALIGN → DESCEND)"""
         grasp_pos = self._get_grasp_point()
         cap_pos = self._get_pen_cap_pos()
         pregrasp_pos = self._get_pregrasp_pos()
@@ -420,7 +438,7 @@ class E0509IKEnv(DirectRLEnv):
 
         rewards = torch.zeros(self.num_envs, device=self.device)
 
-        # 지수적 정렬 보너스
+        # 지수적 정렬 보너스 (ALIGN 단계에서 주로 사용)
         align_value = -dot_product
         exponential_bonus = torch.where(
             align_value > self.cfg.exponential_align_threshold,
@@ -428,44 +446,85 @@ class E0509IKEnv(DirectRLEnv):
             torch.ones_like(align_value)
         )
 
-        # PRE_GRASP 단계
+        # =========================================================
+        # PRE_GRASP 단계: 위치 접근에 집중 (정렬은 약하게)
+        # =========================================================
         pregrasp_mask = (self.phase == PHASE_PRE_GRASP)
         if pregrasp_mask.any():
+            # 거리 페널티
             rewards[pregrasp_mask] += self.cfg.rew_scale_pregrasp_dist * distance_to_pregrasp[pregrasp_mask]
+            # 진행 보상
             progress = self.prev_distance_to_pregrasp[pregrasp_mask] - distance_to_pregrasp[pregrasp_mask]
             rewards[pregrasp_mask] += self.cfg.rew_scale_pregrasp_progress * torch.clamp(progress, min=0)
+            # 약한 정렬 보상
             align_quality = (-dot_product[pregrasp_mask] - 0.5) / 0.5
             rewards[pregrasp_mask] += self.cfg.rew_scale_pregrasp_align * torch.clamp(align_quality, min=0)
-            rewards[pregrasp_mask] += self.cfg.rew_scale_exponential_align * exponential_bonus[pregrasp_mask]
 
-        # DESCEND 단계
+        # =========================================================
+        # ALIGN 단계: 위치 유지 + 자세 정렬에 집중
+        # =========================================================
+        align_mask = (self.phase == PHASE_ALIGN)
+        if align_mask.any():
+            # 위치 유지 페널티 (align_target_pos에서 벗어나면 페널티)
+            distance_from_target = torch.norm(grasp_pos[align_mask] - self.align_target_pos[align_mask], dim=-1)
+            rewards[align_mask] += self.cfg.rew_scale_align_position_hold * distance_from_target
+
+            # 정렬 보상 (강화)
+            align_quality = (-dot_product[align_mask] - 0.5) / 0.5
+            rewards[align_mask] += self.cfg.rew_scale_align_orientation * torch.clamp(align_quality, min=0)
+
+            # 지수적 정렬 보너스 (강화)
+            rewards[align_mask] += self.cfg.rew_scale_exponential_align * exponential_bonus[align_mask]
+
+        # =========================================================
+        # DESCEND 단계: 정렬 유지하며 수직 하강
+        # =========================================================
         descend_mask = (self.phase == PHASE_DESCEND)
         if descend_mask.any():
+            # 거리 페널티
             rewards[descend_mask] += self.cfg.rew_scale_descend_dist * distance_to_cap[descend_mask]
+            # 정렬 유지 보상
             align_maintain = -dot_product[descend_mask]
             rewards[descend_mask] += self.cfg.rew_scale_descend_align * align_maintain
-            rewards[descend_mask] += self.cfg.rew_scale_exponential_align * exponential_bonus[descend_mask]
+            # 하강 진행 보상
             descend_progress = self.prev_distance_to_cap[descend_mask] - distance_to_cap[descend_mask]
             rewards[descend_mask] += self.cfg.rew_scale_descend_progress * torch.clamp(descend_progress, min=0)
 
+            # 정렬 풀리면 페널티
             align_lost = dot_product[descend_mask] > -0.9
             if align_lost.any():
                 descend_indices = torch.where(descend_mask)[0]
                 lost_indices = descend_indices[align_lost]
                 rewards[lost_indices] -= 5.0
 
+        # =========================================================
         # 단계 전환
-        transition_to_descend = pregrasp_mask & (distance_to_pregrasp < PRE_GRASP_TO_DESCEND_DIST) & (dot_product < PRE_GRASP_TO_DESCEND_DOT)
+        # =========================================================
+        # PRE_GRASP → ALIGN (위치만 충족하면 전환, 정렬 조건 없음!)
+        transition_to_align = pregrasp_mask & (distance_to_pregrasp < PRE_GRASP_TO_ALIGN_DIST)
+        if transition_to_align.any():
+            self.phase[transition_to_align] = PHASE_ALIGN
+            rewards[transition_to_align] += self.cfg.rew_scale_phase_transition
+            # 현재 위치를 ALIGN 목표로 저장
+            self.align_target_pos[transition_to_align] = grasp_pos[transition_to_align].clone()
+
+        # ALIGN → DESCEND (정렬 완료 시 전환)
+        transition_to_descend = align_mask & (dot_product < ALIGN_TO_DESCEND_DOT)
         if transition_to_descend.any():
             self.phase[transition_to_descend] = PHASE_DESCEND
             rewards[transition_to_descend] += self.cfg.rew_scale_phase_transition
             self.prev_distance_to_cap[transition_to_descend] = distance_to_cap[transition_to_descend]
 
+        # =========================================================
         # 성공 보상
+        # =========================================================
         success = (distance_to_cap < SUCCESS_DIST) & (dot_product < SUCCESS_DOT)
         rewards[success] += self.cfg.rew_scale_success
         self.success_count[success] += 1
 
+        # =========================================================
+        # 공통 페널티
+        # =========================================================
         # 액션 페널티
         rewards += self.cfg.rew_scale_action * torch.sum(torch.square(self.actions), dim=-1)
 
@@ -474,7 +533,9 @@ class E0509IKEnv(DirectRLEnv):
         if wrong_direction_mask.any():
             rewards[wrong_direction_mask] += self.cfg.rew_scale_wrong_direction * dot_product[wrong_direction_mask]
 
+        # =========================================================
         # 이전 거리 업데이트
+        # =========================================================
         self.prev_distance_to_pregrasp = distance_to_pregrasp.clone()
         self.prev_distance_to_cap[descend_mask] = distance_to_cap[descend_mask]
 
@@ -522,25 +583,32 @@ class E0509IKEnv(DirectRLEnv):
         self.robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
 
-        # 펜 리셋 (랜덤 위치)
+        # 펜 리셋 (캡 위치 기준으로 랜덤 생성)
         pen_state = self.pen.data.default_root_state[env_ids].clone()
 
-        pen_pos_x = sample_uniform(
-            self.cfg.pen_pos_range["x"][0], self.cfg.pen_pos_range["x"][1],
+        # 캡 위치를 먼저 랜덤 생성
+        cap_pos_x = sample_uniform(
+            self.cfg.pen_cap_pos_range["x"][0], self.cfg.pen_cap_pos_range["x"][1],
             (len(env_ids),), device=self.device
         )
-        pen_pos_y = sample_uniform(
-            self.cfg.pen_pos_range["y"][0], self.cfg.pen_pos_range["y"][1],
+        cap_pos_y = sample_uniform(
+            self.cfg.pen_cap_pos_range["y"][0], self.cfg.pen_cap_pos_range["y"][1],
             (len(env_ids),), device=self.device
         )
-        pen_pos_z = sample_uniform(
-            self.cfg.pen_pos_range["z"][0], self.cfg.pen_pos_range["z"][1],
+        cap_pos_z = sample_uniform(
+            self.cfg.pen_cap_pos_range["z"][0], self.cfg.pen_cap_pos_range["z"][1],
             (len(env_ids),), device=self.device
         )
 
-        pen_state[:, 0] = self.scene.env_origins[env_ids, 0] + pen_pos_x
-        pen_state[:, 1] = self.scene.env_origins[env_ids, 1] + pen_pos_y
-        pen_state[:, 2] = self.scene.env_origins[env_ids, 2] + pen_pos_z
+        # 펜 중심 = 캡 위치 - (PEN_LENGTH / 2) * Z방향
+        # 수직 펜이므로 Z방향 = (0, 0, 1)
+        pen_center_x = cap_pos_x
+        pen_center_y = cap_pos_y
+        pen_center_z = cap_pos_z - PEN_LENGTH / 2
+
+        pen_state[:, 0] = self.scene.env_origins[env_ids, 0] + pen_center_x
+        pen_state[:, 1] = self.scene.env_origins[env_ids, 1] + pen_center_y
+        pen_state[:, 2] = self.scene.env_origins[env_ids, 2] + pen_center_z
 
         # 펜 방향 랜덤화
         roll = sample_uniform(
@@ -655,11 +723,12 @@ class E0509IKEnv(DirectRLEnv):
         return torch.stack([w, x, y, z], dim=-1)
 
     def get_phase_stats(self) -> dict:
-        """단계별 통계 반환"""
-        current_phases = torch.bincount(self.phase, minlength=2)
+        """단계별 통계 반환 (3단계)"""
+        current_phases = torch.bincount(self.phase, minlength=3)
         return {
             "pre_grasp": current_phases[0].item(),
-            "descend": current_phases[1].item(),
+            "align": current_phases[1].item(),
+            "descend": current_phases[2].item(),
             "total_success": self.success_count.sum().item(),
         }
 
