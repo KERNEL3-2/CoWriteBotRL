@@ -419,7 +419,119 @@ python pen_grasp_rl/scripts/play_direct.py --checkpoint /path/to/model.pt --num_
 | joint_5 | 60°~120° | **30°~150°** |
 | joint_6 | ±45° | **±90°** |
 
-**결과**: (학습 예정)
+**결과**:
+| Iteration | Mean Reward | Episode Length | 비고 |
+|-----------|-------------|----------------|------|
+| 0 | -1366.51 | ~20 | 초기 |
+| 2881 | **776.66** | 359 | 최고 리워드 |
+| 4058 | 751.84 | 359 | 최종 (정체) |
+
+**학습 그래프**:
+
+![E0509 Direct V5 Training Analysis](images/e0509_direct_analysis.png)
+
+**문제점 발견** (시뮬레이션 테스트):
+- **그리퍼가 아래에서 위로 올려다보는 자세**로 학습됨
+- 관절 한계를 확장해도 "위에서 아래로 내려다보기" 자세 유도 어려움
+- Joint space 제어의 한계: 원하는 자세를 직접 지정할 수 없음
+- **Episode Length = 359**: 여전히 타임아웃 (성공 종료 없음)
+
+**결론**: Joint space 제어의 한계 → **IK (Task Space) 제어**로 전환 필요
+
+---
+
+## IK 환경 (Task Space Control)
+
+### 개요
+
+Joint space 제어의 한계를 극복하기 위해 **IK (Inverse Kinematics) 기반 Task Space 제어** 환경 추가.
+
+| 항목 | Direct 환경 (기존) | IK 환경 (신규) |
+|------|-------------------|----------------|
+| 제어 방식 | Joint space (관절 각도) | Task space (EE 위치/자세) |
+| 액션 공간 | 6D (Δjoint1~6) | 6D (Δx, Δy, Δz, Δroll, Δpitch, Δyaw) |
+| 관절 한계 | 작업 공간 기반 커스텀 | 로봇 기본 (soft limits) |
+| 초기 자세 | 기본 | **위에서 내려다보기** (joint_5=90°) |
+| 특이점 회피 | 관절 한계로 강제 | IK solver 자연 회피 |
+
+### IK 환경 특징
+
+**1. Task Space 액션**:
+```python
+action_space = 6  # [Δx, Δy, Δz, Δroll, Δpitch, Δyaw]
+action_scale = 0.02  # 미터/라디안 단위
+```
+
+**2. 초기 자세 (위에서 내려다보기)**:
+```python
+init_state = {
+    "joint_1": 0.0,
+    "joint_2": -0.5,      # 어깨 약간 앞으로
+    "joint_3": 1.0,       # 팔꿈치 굽힘
+    "joint_4": 0.0,
+    "joint_5": 1.57,      # 손목 90도 - 그리퍼가 아래를 향함
+    "joint_6": 0.0,
+}
+```
+
+**3. DifferentialIKController 설정**:
+```python
+ik_controller = DifferentialIKController(
+    cfg=DifferentialIKControllerCfg(
+        command_type="pose",      # 위치 + 자세 제어
+        use_relative_mode=True,   # Delta 제어
+        ik_method="dls",          # Damped Least Squares
+        ik_params={"lambda_val": 0.05},
+    ),
+    num_envs=num_envs,
+    device=device,
+)
+```
+
+**4. 관찰 공간 확장**:
+| 관찰 | 차원 | 설명 |
+|------|------|------|
+| (기존 Direct와 동일) | 27 | joint, grasp, cap, rel, axes |
+| ee_pos | 3 | End-effector 위치 (root frame) |
+| ee_axis_angle | 3 | End-effector 자세 (axis-angle) |
+| **총합** | **33** | |
+
+**5. 보상 함수**: Direct 환경과 **동일** (특이점 페널티만 제거)
+
+### IK 환경 장점
+
+1. **직관적인 액션 공간**: "앞으로 이동", "아래로 내려가기" 등 직접 지정
+2. **초기 자세 강제**: 학습 시작부터 원하는 자세로 시작
+3. **관절 한계 문제 해소**: IK가 실행 가능한 자세 계산
+4. **Sim2Real 용이**: 실제 로봇에서도 Task space 제어 가능
+
+### 실행 방법
+
+**학습**:
+```bash
+source ~/isaacsim_env/bin/activate
+cd ~/IsaacLab
+python pen_grasp_rl/scripts/train_ik.py --headless --num_envs 4096 --max_iterations 5000
+```
+
+**테스트**:
+```bash
+python pen_grasp_rl/scripts/play_ik.py --checkpoint /path/to/model.pt --num_envs 50
+```
+
+### 파일 구조
+
+```
+pen_grasp_rl/
+├── envs/
+│   ├── e0509_direct_env.py   # 기존 Joint space 환경
+│   └── e0509_ik_env.py       # 신규 Task space 환경
+└── scripts/
+    ├── train_direct.py
+    ├── play_direct.py
+    ├── train_ik.py           # 신규
+    └── play_ik.py            # 신규
+```
 
 ---
 
@@ -428,11 +540,14 @@ python pen_grasp_rl/scripts/play_direct.py --checkpoint /path/to/model.pt --num_
 1. [x] V1 학습 분석 완료
 2. [x] V2 학습 및 분석 완료
 3. [x] V3 (Pre-grasp + 지수적 정렬 보상) 코드 수정
-4. [ ] V3 학습 실행 및 결과 확인
-5. [ ] 성공률 > 50% & 정렬 정밀도 확인 후 2단계 진행
-6. [ ] 2단계: 펜 방향 랜덤화 + Feasibility 데이터 수집
-7. [ ] Feasibility Classifier 학습 (MLP)
-8. [ ] Sim2Real 전이 테스트
+4. [x] V4 학습 (작업 공간 기반 관절 한계) - 관절 한계 너무 제한적
+5. [x] V5 학습 (관절 한계 확장) - 그리퍼가 아래에서 위로 올려다봄 (실패)
+6. [x] **IK 환경 추가** (Task Space Control)
+7. [ ] **IK 환경 학습 실행 및 결과 확인**
+8. [ ] 성공률 > 50% & 정렬 정밀도 확인 후 2단계 진행
+9. [ ] 2단계: 펜 방향 랜덤화 + Feasibility 데이터 수집
+10. [ ] Feasibility Classifier 학습 (MLP)
+11. [ ] Sim2Real 전이 테스트
 
 ---
 
@@ -443,4 +558,6 @@ python pen_grasp_rl/scripts/play_direct.py --checkpoint /path/to/model.pt --num_
 | 2024-12-17 | Direct 환경 초기 구현 (V1) | `3472b87` |
 | 2024-12-17 | 단계 순서 변경 (V2): ALIGN → APPROACH → GRASP | `c3fe5c3` |
 | 2024-12-18 | Pre-grasp 방식 (V3) + 지수적 정렬 보상 + 특이점 회피 | - |
-| 2024-12-18 | V4: 작업 공간 기반 관절 한계 + action_scale 축소 + 특이점 페널티 제거 | (현재) |
+| 2024-12-18 | V4: 작업 공간 기반 관절 한계 + action_scale 축소 + 특이점 페널티 제거 | - |
+| 2024-12-18 | V5: 관절 한계 확장 (그리퍼 아래 향하도록) | `1d71d76` |
+| 2024-12-18 | **IK 환경 추가**: Task Space Control (e0509_ik_env.py, train_ik.py, play_ik.py) | (현재) |
