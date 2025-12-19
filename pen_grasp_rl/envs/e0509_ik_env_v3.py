@@ -35,7 +35,6 @@ from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
 from isaaclab.utils.math import sample_uniform
 from isaaclab.actuators import ImplicitActuatorCfg
-from isaaclab.sensors import ContactSensor, ContactSensorCfg
 
 # IK Controller
 from isaaclab.controllers.differential_ik import DifferentialIKController
@@ -105,7 +104,7 @@ class E0509IKEnvV3Cfg(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/Robot",
         spawn=sim_utils.UsdFileCfg(
             usd_path=ROBOT_USD_PATH,
-            activate_contact_sensors=True,  # 충돌 감지 활성화
+            activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 max_depenetration_velocity=5.0,
@@ -162,15 +161,6 @@ class E0509IKEnvV3Cfg(DirectRLEnvCfg):
         init_state=RigidObjectCfg.InitialStateCfg(
             pos=(0.4, 0.0, 0.3),
         ),
-    )
-
-    # 접촉 센서 (그리퍼용)
-    contact_sensor_cfg: ContactSensorCfg = ContactSensorCfg(
-        prim_path="/World/envs/env_.*/Robot/link_6",
-        update_period=0.0,
-        history_length=1,
-        track_air_time=False,
-        filter_prim_paths_expr=["/World/envs/env_.*/Pen"],
     )
 
     # 펜 캡 위치 범위
@@ -312,10 +302,6 @@ class E0509IKEnvV3(DirectRLEnv):
         self.pen = RigidObject(self.cfg.pen_cfg)
         self.scene.rigid_objects["pen"] = self.pen
 
-        # 접촉 센서
-        self.contact_sensor = ContactSensor(self.cfg.contact_sensor_cfg)
-        self.scene.sensors["contact_sensor"] = self.contact_sensor
-
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
 
         light_cfg = sim_utils.DomeLightCfg(intensity=2500.0, color=(0.75, 0.75, 0.75))
@@ -449,13 +435,32 @@ class E0509IKEnvV3(DirectRLEnv):
         return cap_pos + PRE_GRASP_AXIS_DIST * pen_axis
 
     def _check_pen_collision(self) -> torch.Tensor:
-        """펜 몸체와의 충돌 감지"""
-        # 접촉 센서 데이터 확인
-        contact_forces = self.contact_sensor.data.net_forces_w
-        contact_magnitude = torch.norm(contact_forces, dim=-1).squeeze(-1)
+        """펜 몸체와의 충돌 감지 (거리 기반)"""
+        grasp_pos = self._get_grasp_point()
+        pen_pos = self.pen.data.root_pos_w
+        cap_pos = self._get_pen_cap_pos()
 
-        # 충돌 여부 (force > threshold)
-        collision = contact_magnitude > 1.0
+        # 펜 축 방향
+        pen_axis = self._get_pen_z_axis()
+
+        # 그리퍼에서 펜 중심까지의 벡터
+        grasp_to_pen = pen_pos - grasp_pos
+
+        # 펜 축에 투영
+        proj_length = torch.sum(grasp_to_pen * pen_axis, dim=-1)
+
+        # 펜 축에 수직인 거리 (펜 몸체까지의 최단 거리)
+        proj_vec = proj_length.unsqueeze(-1) * pen_axis
+        perp_to_pen = grasp_to_pen - proj_vec
+        perp_dist = torch.norm(perp_to_pen, dim=-1)
+
+        # 펜 몸체 범위 내에 있는지 (캡이 아닌 몸체 부분)
+        # 펜 길이의 절반 이내이고, 캡 쪽이 아닌 경우
+        in_pen_range = (torch.abs(proj_length) < PEN_LENGTH / 2) & (proj_length < 0)
+
+        # 충돌 조건: 펜 몸체 범위 내에서 수직 거리 < 3cm
+        collision = in_pen_range & (perp_dist < 0.03)
+
         return collision
 
     def _get_observations(self) -> dict:
