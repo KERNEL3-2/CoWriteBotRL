@@ -214,11 +214,11 @@ class E0509IKEnvV3Cfg(DirectRLEnvCfg):
     rew_scale_phase_transition = 15.0
     rew_scale_action = -0.005
 
-    # 페널티 (완화)
-    rew_scale_collision = -5.0           # 펜 몸체 충돌 페널티 (완화)
-    rew_scale_phase_stall = -0.1         # 단계 체류 페널티 (완화)
-    phase_stall_threshold = 200          # 더 여유있게
-    rew_scale_wrong_side = -2.0          # 펜 뒤에서 접근 시 페널티 (완화)
+    # 페널티
+    rew_scale_collision = -5.0           # 펜 몸체 충돌 페널티
+    rew_scale_phase_stall = 0.0          # 비활성화
+    phase_stall_threshold = 999999       # 비활성화
+    rew_scale_wrong_side = 0.0           # 비활성화
 
 
 class E0509IKEnvV3(DirectRLEnv):
