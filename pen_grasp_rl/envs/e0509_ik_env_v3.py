@@ -184,41 +184,41 @@ class E0509IKEnvV3Cfg(DirectRLEnvCfg):
     ee_offset_pos = [0.0, 0.0, 0.15]
 
     # ==========================================================================
-    # 보상 스케일 (V3: 펜 축 기준)
+    # 보상 스케일 (V3: 펜 축 기준) - V2 수준으로 조정
     # ==========================================================================
 
     # APPROACH 단계: 펜 축 방향에서 접근
-    rew_scale_axis_dist = -5.0           # 축 방향 거리 페널티
-    rew_scale_perp_dist = -15.0          # 축에서 벗어난 거리 페널티 (강함!)
-    rew_scale_approach_progress = 15.0   # 접근 진행 보상
-    rew_scale_on_axis_bonus = 3.0        # 축 위에 있을 때 보너스
+    rew_scale_axis_dist = -2.0           # 축 방향 거리 페널티 (완화)
+    rew_scale_perp_dist = -5.0           # 축에서 벗어난 거리 페널티 (완화)
+    rew_scale_approach_progress = 10.0   # 접근 진행 보상
+    rew_scale_on_axis_bonus = 2.0        # 축 위에 있을 때 보너스
 
     # ALIGN 단계: 자세 정렬
-    rew_scale_align_position_hold = -5.0
-    rew_scale_align_orientation = 5.0
-    rew_scale_exponential_align = 1.5
+    rew_scale_align_position_hold = -3.0
+    rew_scale_align_orientation = 3.0
+    rew_scale_exponential_align = 0.5
     exponential_align_threshold = 0.85
-    exponential_align_scale = 12.0
+    exponential_align_scale = 10.0
 
     # DESCEND 단계: 하강
-    rew_scale_descend_dist = -10.0
-    rew_scale_descend_align = 3.0
-    rew_scale_descend_progress = 15.0
+    rew_scale_descend_dist = -5.0
+    rew_scale_descend_align = 2.0
+    rew_scale_descend_progress = 10.0
 
     # GRASP 단계: 그리퍼 닫기
     rew_scale_grasp_close = 5.0
     rew_scale_grasp_hold = 10.0
 
     # 공통
-    rew_scale_success = 150.0
-    rew_scale_phase_transition = 25.0
-    rew_scale_action = -0.01
+    rew_scale_success = 100.0
+    rew_scale_phase_transition = 15.0
+    rew_scale_action = -0.005
 
-    # 페널티
-    rew_scale_collision = -20.0          # 펜 몸체 충돌 페널티
-    rew_scale_phase_stall = -0.5         # 단계 체류 페널티 (스텝당)
-    phase_stall_threshold = 100          # 이 스텝 이후부터 체류 페널티 적용
-    rew_scale_wrong_side = -10.0         # 펜 뒤에서 접근 시 페널티
+    # 페널티 (완화)
+    rew_scale_collision = -5.0           # 펜 몸체 충돌 페널티 (완화)
+    rew_scale_phase_stall = -0.1         # 단계 체류 페널티 (완화)
+    phase_stall_threshold = 200          # 더 여유있게
+    rew_scale_wrong_side = -2.0          # 펜 뒤에서 접근 시 페널티 (완화)
 
 
 class E0509IKEnvV3(DirectRLEnv):
