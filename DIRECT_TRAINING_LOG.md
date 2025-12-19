@@ -894,6 +894,52 @@ python pen_grasp_rl/scripts/train_ik_v4.py --headless --num_envs 4096 --max_iter
 python pen_grasp_rl/scripts/play_ik_v4.py --checkpoint /path/to/model.pt --num_envs 32
 ```
 
+**학습 결과**:
+
+| Iteration | Mean Reward | Episode Length | 비고 |
+|-----------|-------------|----------------|------|
+| 0 | -589.26 | ~22 | 초기 |
+| ~700 | **+1,190.41** | ~400 | 최고 리워드 |
+| 1470 | ~1,100 | 449 | 최종 |
+
+**학습 그래프**:
+
+![E0509 IK V4 Training](images/e0509_ik_v4_training.png)
+
+**Play 테스트 결과** (Step 700):
+```
+Step 700: reward=0.0028, phases=[APP:0, ALN:0, FINE:0, DESC:31, GRP:1], success=3
+  → perp_dist=0.0078m (need <0.05), axis_dist=0.0075m
+  → dist_cap=0.0144m, dot=-0.9756 (ALIGN needs <-0.85, FINE needs <-0.98)
+  → on_correct_side=100.0%
+```
+
+**핵심 성과**:
+1. **success=3 달성!**: V3에서 0이던 성공 횟수가 3으로 증가
+2. **DESCEND 단계 진입**: 31개 환경이 DESCEND 진입 (TCP 제어 성공)
+3. **정밀 정렬 달성**: dot=-0.9756 (약 12도 오차)
+4. **Hybrid 접근 검증**: RL(APPROACH,ALIGN) + TCP(FINE_ALIGN,DESCEND,GRASP) 성공
+
+**다음 단계**: 펜 각도 랜덤화 (±30도) 추가 후 일반화 학습
+
+---
+
+### IK V4 + 펜 각도 랜덤화 (현재)
+
+**날짜**: 2024-12-19
+
+**변경사항**:
+```python
+# 펜 방향 랜덤화 (±30도)
+pen_rot_range = {
+    "roll": (-0.52, 0.52),    # ±30도 (0.52 rad ≈ 30°)
+    "pitch": (-0.52, 0.52),   # ±30도
+    "yaw": (-3.14, 3.14),     # 전체 회전 (360°)
+}
+```
+
+**보상 구조 변경 없음**: 펜 축 기반 보상이므로 각도 변경에 자연스럽게 적응
+
 **학습 결과**: (학습 후 업데이트 예정)
 
 ---
@@ -913,11 +959,12 @@ python pen_grasp_rl/scripts/play_ik_v4.py --checkpoint /path/to/model.pt --num_e
 11. [x] **IK V3 학습** - Mean Reward +1,621 달성! (2025 iterations)
 12. [x] **IK V3 Play 테스트** - 조건 엄격, GRASP 진입 실패
 13. [x] **IK V4 구현** - Hybrid RL + TCP Control
-14. [ ] **IK V4 학습** - 학습 결과 확인
-15. [ ] 성공률 > 50% & 정렬 정밀도 확인 후 2단계 진행
-16. [ ] 2단계: 펜 방향 랜덤화 + Feasibility 데이터 수집
-17. [ ] Feasibility Classifier 학습 (MLP)
-18. [ ] Sim2Real 전이 테스트
+14. [x] **IK V4 학습** - success=3, DESCEND 진입 성공!
+15. [x] **IK V4 Play 테스트** - Hybrid 접근 검증 성공
+16. [ ] **IK V4 + 펜 각도 랜덤화 학습** ← 현재
+17. [ ] 성공률 > 50% 확인 후 다음 단계 진행
+18. [ ] Feasibility Classifier 학습 (MLP)
+19. [ ] Sim2Real 전이 테스트
 
 ---
 
@@ -936,4 +983,6 @@ python pen_grasp_rl/scripts/play_ik_v4.py --checkpoint /path/to/model.pt --num_e
 | 2024-12-19 | **IK V3**: 펜 축 기준 접근 + 충돌 페널티 + 단계 체류 페널티 | `389e453` |
 | 2024-12-19 | **IK V3 학습**: Mean Reward +1,621 (2025 iter) | - |
 | 2024-12-19 | **IK V3 Play 테스트**: 조건 엄격, GRASP 진입 실패 | - |
-| 2024-12-19 | **IK V4**: Hybrid RL + TCP Control | (현재) |
+| 2024-12-19 | **IK V4**: Hybrid RL + TCP Control | - |
+| 2024-12-19 | **IK V4 학습**: success=3, DESCEND 진입 성공 (1470 iter) | - |
+| 2024-12-19 | **IK V4 + 펜 각도 랜덤화**: ±30도 roll/pitch, 360도 yaw | `1a1f93f` |
