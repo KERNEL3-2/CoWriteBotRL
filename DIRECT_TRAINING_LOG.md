@@ -759,6 +759,141 @@ python pen_grasp_rl/scripts/train_ik_v3.py --headless --num_envs 4096 --max_iter
 python pen_grasp_rl/scripts/play_ik_v3.py --num_envs 16
 ```
 
+**학습 결과**:
+
+| Iteration | Mean Reward | Episode Length | 비고 |
+|-----------|-------------|----------------|------|
+| 0 | ~-35,000 | ~20 | 초기 (페널티 조정 전) |
+| ~300 | ~-35,000 | ~100 | 페널티 스케일 조정 |
+| 2004 | **+1,629.02** | 449 | 최고 리워드 |
+| 2025 | **+1,621.81** | 449 | 최종 |
+
+**학습 그래프**:
+
+![E0509 IK V3 Training](images/e0509_ik_v3_training.png)
+
+**학습 과정 분석**:
+
+1. **초기 문제점**:
+   - 보상 스케일이 너무 커서 value_function loss가 800,000+
+   - phase_stall, wrong_side 페널티가 학습을 막음
+
+2. **조정 내용**:
+   - 보상 스케일 축소: perp_dist -15→-5, axis_dist -5→-2, collision -20→-5
+   - phase_stall, wrong_side 페널티 비활성화 (0.0)
+
+3. **결과**:
+   - Mean Reward: -35,000 → **+1,600** (성공적인 양수 전환!)
+   - Value Loss: 800,000 → **15.6** (안정화)
+   - Episode Length: 449/500 (긴 에피소드)
+
+**현재 보상 스케일** (조정 후):
+```python
+rew_scale_axis_dist = -2.0
+rew_scale_perp_dist = -5.0
+rew_scale_collision = -5.0
+rew_scale_phase_stall = 0.0  # 비활성화
+rew_scale_wrong_side = 0.0   # 비활성화
+```
+
+**Play 테스트 결과**:
+
+```
+Step 1700: reward=-0.2558, phases=[APP:22, ALN:7, DESC:3, GRP:0], success=0
+  → perp_dist=0.0551m (need <0.03), axis_dist=0.0547m
+  → dist_cap=0.0871m, dot=-0.9268 (need <-0.95)
+```
+
+**문제점 발견**:
+1. **조건이 너무 엄격**: perp_dist < 3cm, dot < -0.95 충족 어려움
+2. **초기 자세 문제**: 아래로 먼저 내려갔다가 다시 올라오는 패턴
+3. **GRASP 진입 실패**: DESCEND까지는 도달하지만 최종 성공 0
+
+**결론**: 조건 완화 + 초기 자세 높이기 + Hybrid 접근 필요 → **IK V4**
+
+---
+
+### IK V4 (Hybrid RL + TCP Control)
+
+**날짜**: 2024-12-19
+
+**V3 문제 분석**:
+- perp_dist 조건(3cm)이 너무 엄격
+- dot 조건(-0.95)도 엄격
+- 정밀 정렬을 RL로 학습하기 어려움
+
+**핵심 아이디어: Hybrid 접근**
+```
+[RL 정책] → 대략적 접근 (조건 완화)
+              ↓
+        조건 달성? (dist < 5cm, dot < -0.85)
+              ↓
+[TCP 제어] → 정밀 정렬 (dot → -0.98) + 수직 하강 + 그립
+```
+
+**V4 변경사항**:
+
+| 항목 | V3 | V4 |
+|------|-----|-----|
+| perp_dist 조건 | < 3cm | < **5cm** |
+| dot 조건 (ALIGN→FINE) | < -0.95 | < **-0.85** |
+| 초기 자세 (joint_2) | -0.5 | **-0.3** (더 높게) |
+| 초기 자세 (joint_3) | 1.0 | **0.8** (더 높게) |
+| 펜 캡 z 범위 | 0.25~0.40 | **0.20~0.35** |
+| FINE_ALIGN 단계 | 없음 | **TCP 제어 추가** |
+
+**5단계 상태 머신**:
+```
+[RL] APPROACH (perp_dist<5cm, axis_dist<10cm)
+        ↓
+[RL] ALIGN (dot < -0.85)
+        ↓
+[TCP] FINE_ALIGN (dot → -0.98)  ← 정밀 정렬!
+        ↓
+[TCP] DESCEND (수직 하강)
+        ↓
+[TCP] GRASP (그리퍼 닫기)
+        ↓
+    SUCCESS!
+```
+
+**TCP 제어 구현**:
+```python
+# FINE_ALIGN: 그리퍼 z축을 펜 z축과 정렬
+target_z = -pen_z
+current_z = gripper_z
+rotation_axis = cross(current_z, target_z)
+rotation_delta = clamp(angle, max=0.02)  # rad/step
+
+# DESCEND: 펜 축 방향으로 수직 하강
+descend_dir = -pen_z
+tcp_action[:3] = descend_dir * 0.003  # m/step
+```
+
+**파일 구조**:
+```
+pen_grasp_rl/
+├── envs/
+│   └── e0509_ik_env_v4.py   # Hybrid RL + TCP 환경
+└── scripts/
+    ├── train_ik_v4.py       # 학습
+    └── play_ik_v4.py        # 테스트
+```
+
+**실행 방법**:
+
+학습 (별도 터미널):
+```bash
+source ~/isaacsim_env/bin/activate
+cd ~/IsaacLab
+python pen_grasp_rl/scripts/train_ik_v4.py --headless --num_envs 4096 --max_iterations 5000
+```
+
+테스트:
+```bash
+python pen_grasp_rl/scripts/play_ik_v4.py --checkpoint /path/to/model.pt --num_envs 32
+```
+
 **학습 결과**: (학습 후 업데이트 예정)
 
 ---
@@ -775,12 +910,14 @@ python pen_grasp_rl/scripts/play_ik_v3.py --num_envs 16
 8. [x] **IK V2 수정** - ALIGN 단계 추가 + 펜 캡 위치 기준 생성
 9. [x] **IK V2 학습** - 그리퍼가 펜캡 "위"가 아닌 "옆"으로 접근 (문제 발견)
 10. [x] **IK V3 구현** - 펜 축 기준 접근 + 충돌 페널티 + 단계 체류 페널티
-11. [ ] **IK V3 학습** - 학습 결과 확인
-12. [ ] TensorBoard extras 로깅 추가 (학습 중 거리/정렬 모니터링)
-13. [ ] 성공률 > 50% & 정렬 정밀도 확인 후 2단계 진행
-14. [ ] 2단계: 펜 방향 랜덤화 + Feasibility 데이터 수집
-15. [ ] Feasibility Classifier 학습 (MLP)
-16. [ ] Sim2Real 전이 테스트
+11. [x] **IK V3 학습** - Mean Reward +1,621 달성! (2025 iterations)
+12. [x] **IK V3 Play 테스트** - 조건 엄격, GRASP 진입 실패
+13. [x] **IK V4 구현** - Hybrid RL + TCP Control
+14. [ ] **IK V4 학습** - 학습 결과 확인
+15. [ ] 성공률 > 50% & 정렬 정밀도 확인 후 2단계 진행
+16. [ ] 2단계: 펜 방향 랜덤화 + Feasibility 데이터 수집
+17. [ ] Feasibility Classifier 학습 (MLP)
+18. [ ] Sim2Real 전이 테스트
 
 ---
 
@@ -796,4 +933,7 @@ python pen_grasp_rl/scripts/play_ik_v3.py --num_envs 16
 | 2024-12-18 | IK V1: Task Space Control 환경 추가 | `6318733` |
 | 2024-12-18 | IK V2: ALIGN 단계 추가 + 펜 캡 위치 기준 생성 | - |
 | 2024-12-18 | IK V2 학습 결과: 그리퍼가 펜캡 "옆"으로 접근 문제 발견 | - |
-| 2024-12-19 | **IK V3**: 펜 축 기준 접근 + 충돌 페널티 + 단계 체류 페널티 | (현재) |
+| 2024-12-19 | **IK V3**: 펜 축 기준 접근 + 충돌 페널티 + 단계 체류 페널티 | `389e453` |
+| 2024-12-19 | **IK V3 학습**: Mean Reward +1,621 (2025 iter) | - |
+| 2024-12-19 | **IK V3 Play 테스트**: 조건 엄격, GRASP 진입 실패 | - |
+| 2024-12-19 | **IK V4**: Hybrid RL + TCP Control | (현재) |

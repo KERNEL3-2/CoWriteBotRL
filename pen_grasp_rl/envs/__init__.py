@@ -34,6 +34,7 @@ from .target_tracking_env import TargetTrackingEnv, TargetTrackingEnvCfg, Target
 # IK 기반 환경
 from .e0509_ik_env import E0509IKEnv, E0509IKEnvCfg, E0509IKEnvCfg_PLAY
 from .e0509_ik_env_v3 import E0509IKEnvV3, E0509IKEnvV3Cfg, E0509IKEnvV3Cfg_PLAY
+from .e0509_ik_env_v4 import E0509IKEnvV4, E0509IKEnvV4Cfg, E0509IKEnvV4Cfg_PLAY
 
 __all__ = [
     # Manager-Based
@@ -48,4 +49,5 @@ __all__ = [
     # IK 기반
     "E0509IKEnv", "E0509IKEnvCfg", "E0509IKEnvCfg_PLAY",
     "E0509IKEnvV3", "E0509IKEnvV3Cfg", "E0509IKEnvV3Cfg_PLAY",
+    "E0509IKEnvV4", "E0509IKEnvV4Cfg", "E0509IKEnvV4Cfg_PLAY",
 ]
