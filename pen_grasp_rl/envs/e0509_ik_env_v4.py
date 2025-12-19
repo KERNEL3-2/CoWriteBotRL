@@ -177,12 +177,10 @@ class E0509IKEnvV4Cfg(DirectRLEnvCfg):
         "z": (0.20, 0.35),  # V3: 0.25~0.40 → V4: 0.20~0.35
     }
 
-    # 펜 방향 랜덤화 (V4: ±30도)
-    pen_rot_range = {
-        "roll": (-0.52, 0.52),    # ±30도 (0.52 rad ≈ 30°)
-        "pitch": (-0.52, 0.52),   # ±30도
-        "yaw": (-3.14, 3.14),     # 전체 회전 (360°)
-    }
+    # 펜 방향 랜덤화 (V4: Z축 기준 원뿔 각도)
+    # 기존 roll/pitch 방식 대신 Z축에서 최대 tilt 각도 제한
+    pen_tilt_max = 0.52  # 최대 기울기 30도 (0.52 rad ≈ 30°)
+    pen_yaw_range = (-3.14, 3.14)  # Z축 회전은 전체 (360°)
 
     # IK 컨트롤러 설정
     ik_method = "dls"
@@ -766,19 +764,15 @@ class E0509IKEnvV4(DirectRLEnv):
         pen_state[:, 1] = self.scene.env_origins[env_ids, 1] + pen_center_y
         pen_state[:, 2] = self.scene.env_origins[env_ids, 2] + pen_center_z
 
-        roll = sample_uniform(
-            self.cfg.pen_rot_range["roll"][0], self.cfg.pen_rot_range["roll"][1],
-            (len(env_ids),), device=self.device
-        )
-        pitch = sample_uniform(
-            self.cfg.pen_rot_range["pitch"][0], self.cfg.pen_rot_range["pitch"][1],
-            (len(env_ids),), device=self.device
-        )
+        # Z축 기준 원뿔 각도로 펜 방향 설정
+        # θ (tilt): 0 ~ max_tilt, φ (azimuth): 0 ~ 2π
+        tilt = sample_uniform(0, self.cfg.pen_tilt_max, (len(env_ids),), device=self.device)
+        azimuth = sample_uniform(0, 2 * 3.14159, (len(env_ids),), device=self.device)
         yaw = sample_uniform(
-            self.cfg.pen_rot_range["yaw"][0], self.cfg.pen_rot_range["yaw"][1],
+            self.cfg.pen_yaw_range[0], self.cfg.pen_yaw_range[1],
             (len(env_ids),), device=self.device
         )
-        pen_quat = self._euler_to_quat(roll, pitch, yaw)
+        pen_quat = self._cone_angle_to_quat(tilt, azimuth, yaw)
         pen_state[:, 3:7] = pen_quat
 
         self.pen.write_root_pose_to_sim(pen_state[:, :7], env_ids)
@@ -867,6 +861,55 @@ class E0509IKEnvV4(DirectRLEnv):
         x = sr * cp * cy - cr * sp * sy
         y = cr * sp * cy + sr * cp * sy
         z = cr * cp * sy - sr * sp * cy
+
+        return torch.stack([w, x, y, z], dim=-1)
+
+    def _cone_angle_to_quat(self, tilt: torch.Tensor, azimuth: torch.Tensor, yaw: torch.Tensor) -> torch.Tensor:
+        """원뿔 각도 → 쿼터니언
+
+        Args:
+            tilt: Z축에서 기울어진 각도 (0 ~ max_tilt)
+            azimuth: 기울어진 방향 (0 ~ 2π, XY 평면에서)
+            yaw: 펜 자체 Z축 회전 (0 ~ 2π)
+
+        Returns:
+            쿼터니언 [w, x, y, z]
+
+        구현:
+            1. Y축 기준 tilt 회전 (기울기)
+            2. Z축 기준 azimuth 회전 (기울어진 방향)
+            3. Z축 기준 yaw 회전 (펜 자체 회전)
+        """
+        # 1. Y축 기준 tilt 회전
+        q1_w = torch.cos(tilt * 0.5)
+        q1_x = torch.zeros_like(tilt)
+        q1_y = torch.sin(tilt * 0.5)
+        q1_z = torch.zeros_like(tilt)
+
+        # 2. Z축 기준 azimuth 회전
+        q2_w = torch.cos(azimuth * 0.5)
+        q2_x = torch.zeros_like(azimuth)
+        q2_y = torch.zeros_like(azimuth)
+        q2_z = torch.sin(azimuth * 0.5)
+
+        # 3. Z축 기준 yaw 회전
+        q3_w = torch.cos(yaw * 0.5)
+        q3_x = torch.zeros_like(yaw)
+        q3_y = torch.zeros_like(yaw)
+        q3_z = torch.sin(yaw * 0.5)
+
+        # 쿼터니언 곱셈: q2 * q1 (azimuth 먼저, 그 다음 tilt)
+        # q = q2 * q1
+        r1_w = q2_w * q1_w - q2_z * q1_y
+        r1_x = q2_w * q1_x + q2_z * q1_z
+        r1_y = q2_w * q1_y + q2_z * q1_x
+        r1_z = q2_z * q1_w + q2_w * q1_z
+
+        # 최종: q3 * (q2 * q1) = q3 * r1
+        w = q3_w * r1_w - q3_z * r1_z
+        x = q3_w * r1_x + q3_z * r1_y
+        y = q3_w * r1_y - q3_z * r1_x
+        z = q3_w * r1_z + q3_z * r1_w
 
         return torch.stack([w, x, y, z], dim=-1)
 
