@@ -631,6 +631,12 @@ pen_cap_pos_range = {
 총 성공 횟수: 0
 ```
 
+**Play 테스트 스크린샷**:
+
+![E0509 IK V2 Play Test](images/e0509_ik_v2_play.png)
+
+*그리퍼가 펜캡 "위"가 아닌 "옆"에서 접근하여 펜에 얹혀있는 모습*
+
 **디버깅 분석**:
 ```
 Step 900: reward=-0.2855, phases=[PRE:16, ALN:0, DESC:0], success=0
