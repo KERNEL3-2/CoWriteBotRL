@@ -31,6 +31,10 @@ from .e0509_direct_env import E0509DirectEnv, E0509DirectEnvCfg, E0509DirectEnvC
 from .simple_move_env import SimpleMoveEnv, SimpleMoveEnvCfg, SimpleMoveEnvCfg_PLAY
 from .target_tracking_env import TargetTrackingEnv, TargetTrackingEnvCfg, TargetTrackingEnvCfg_PLAY
 
+# IK 기반 환경
+from .e0509_ik_env import E0509IKEnv, E0509IKEnvCfg, E0509IKEnvCfg_PLAY
+from .e0509_ik_env_v3 import E0509IKEnvV3, E0509IKEnvV3Cfg, E0509IKEnvV3Cfg_PLAY
+
 __all__ = [
     # Manager-Based
     "PenGraspEnv", "PenGraspEnvCfg",
@@ -41,4 +45,7 @@ __all__ = [
     # Sim2Real
     "SimpleMoveEnv", "SimpleMoveEnvCfg", "SimpleMoveEnvCfg_PLAY",
     "TargetTrackingEnv", "TargetTrackingEnvCfg", "TargetTrackingEnvCfg_PLAY",
+    # IK 기반
+    "E0509IKEnv", "E0509IKEnvCfg", "E0509IKEnvCfg_PLAY",
+    "E0509IKEnvV3", "E0509IKEnvV3Cfg", "E0509IKEnvV3Cfg_PLAY",
 ]

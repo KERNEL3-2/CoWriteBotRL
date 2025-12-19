@@ -614,7 +614,146 @@ pen_cap_pos_range = {
 - **기존**: 거리 < 3cm **AND** dot < -0.95
 - **V2**: 거리 < 3cm **만** (정렬 조건 없음!)
 
-**결과**: (학습 예정)
+**학습 결과**:
+| Iteration | Mean Reward | Episode Length | 비고 |
+|-----------|-------------|----------------|------|
+| 0 | -73.26 | 22 | 초기 |
+| 818 | **2229.27** | 359 | 최고 리워드 |
+| 1999 | 1105.97 | 359 | 최종 |
+
+**학습 그래프**:
+
+![E0509 IK V2 Training](images/e0509_ik_v2_training.png)
+
+**Play 테스트 결과**:
+```
+최종 단계 분포: PRE_GRASP=16, ALIGN=0, DESCEND=0
+총 성공 횟수: 0
+```
+
+**디버깅 분석**:
+```
+Step 900: reward=-0.2855, phases=[PRE:16, ALN:0, DESC:0], success=0
+  → dist_pregrasp=0.0796m (need <0.03), dist_cap=0.0198m, dot=-0.8630 (need <-0.95)
+```
+
+| 지표 | 값 | 조건 | 상태 |
+|------|-----|------|------|
+| dist_pregrasp | 7.96cm | < 3cm 필요 | ❌ 미충족 |
+| dist_cap | 1.98cm | - | ✓ 펜캡에 가까움 |
+| dot | -0.863 | < -0.95 필요 | ❌ 미충족 |
+
+**문제점 발견**:
+
+1. **그리퍼가 펜캡 "위 7cm"가 아닌 "옆"으로 접근**:
+   - 펜캡까지 거리: 2cm (매우 가까움)
+   - pre-grasp 위치(펜캡 위 7cm)까지 거리: 8cm (멀다)
+   - 즉, 그리퍼가 펜캡 위가 아니라 펜캡 옆으로 다가감
+
+2. **Reward가 높았던 이유**:
+   - ALIGN 단계 추가로 보상 구조 변경
+   - ALIGN 진입 시 매 스텝 ~8-13점 보상 누적
+   - 하지만 실제로는 ALIGN 단계에 진입조차 못함
+
+3. **원인 추정**:
+   - PRE_GRASP 보상에서 `pregrasp_dist` 페널티가 약함
+   - 다른 요소(정렬 등)가 더 크게 작용하여 "위"가 아닌 "옆"으로 학습됨
+
+**다음 해결 방안 (검토 필요)**:
+
+1. PRE_GRASP 거리 페널티 강화
+2. PRE_GRASP → ALIGN 조건을 `dist_cap` 기준으로 변경 검토
+3. 관찰값 점검 (pre-grasp 위치 계산 확인)
+4. TensorBoard extras 로깅 추가하여 학습 중 거리/정렬 모니터링
+
+---
+
+### IK V3 (펜 축 기준 접근 + 충돌 페널티 + 단계 체류 페널티)
+
+**날짜**: 2024-12-19
+
+**V2 문제 분석**:
+- 그리퍼가 펜캡 "위"가 아닌 "옆"에서 접근
+- 충돌 페널티 없어서 펜에 부딪혀도 그대로 진행
+- 높이 조건("위에서")은 펜이 기울어지면 일반화 불가
+
+**핵심 변경 사항**:
+
+**1. 펜 축 기준 접근 (일반화 가능)**:
+```python
+# 그리퍼 → 캡 벡터
+grasp_to_cap = cap_pos - grasp_pos
+
+# 펜 축에 투영 (축 방향 거리)
+axis_distance = dot(grasp_to_cap, pen_axis)
+
+# 펜 축에 수직인 거리 (축에서 벗어난 정도)
+projection = axis_distance * pen_axis
+perpendicular_dist = norm(grasp_to_cap - projection)
+```
+
+**2. 4단계 상태 머신**:
+```
+APPROACH (펜 축 방향에서 접근)
+    ↓ perp_dist < 3cm & axis_dist < 8cm
+ALIGN (자세 정렬)
+    ↓ dot < -0.95
+DESCEND (하강)
+    ↓ dist_cap < 2cm & dot < -0.95
+GRASP (그리퍼 닫기)
+    ↓ dist_cap < 1.5cm & dot < -0.95 & gripper_closed
+SUCCESS!
+```
+
+**3. 새로운 페널티**:
+| 페널티 | 스케일 | 설명 |
+|--------|--------|------|
+| perpendicular_dist | -15.0 | 펜 축에서 벗어난 거리 (강함!) |
+| 충돌 페널티 | -20.0 | 펜 몸체 접촉 시 (DESCEND 전 단계) |
+| 단계 체류 페널티 | -0.5/step | 100스텝 이후부터, 점점 증가 |
+| 잘못된 방향 | -10.0 | 펜 뒤에서 접근 시 |
+
+**4. APPROACH 단계 보상**:
+| 보상 | 스케일 | 설명 |
+|------|--------|------|
+| axis_dist 페널티 | -5.0 | 축 방향 거리 |
+| perp_dist 페널티 | -15.0 | 축에서 벗어난 거리 |
+| on_axis 보너스 | +3.0 | perp_dist < 3cm일 때 |
+| 접근 진행 보상 | +15.0 | axis_dist 감소량 |
+
+**5. 관찰 공간 확장** (33 → 36):
+| 관찰 | 차원 | 설명 |
+|------|------|------|
+| (기존) | 33 | joint, grasp, cap, rel, axes, ee_pose |
+| perpendicular_dist | 1 | 펜 축에서 벗어난 거리 |
+| axis_distance | 1 | 펜 축 방향 거리 |
+| phase | 1 | 현재 단계 (정규화) |
+
+**파일 구조**:
+```
+pen_grasp_rl/
+├── envs/
+│   └── e0509_ik_env_v3.py   # V3 환경
+└── scripts/
+    ├── train_ik_v3.py       # 학습
+    └── play_ik_v3.py        # 테스트
+```
+
+**실행 방법**:
+
+학습 (별도 터미널):
+```bash
+source ~/isaacsim_env/bin/activate
+cd ~/IsaacLab
+python pen_grasp_rl/scripts/train_ik_v3.py --headless --num_envs 4096 --max_iterations 5000
+```
+
+테스트:
+```bash
+python pen_grasp_rl/scripts/play_ik_v3.py --num_envs 16
+```
+
+**학습 결과**: (학습 후 업데이트 예정)
 
 ---
 
@@ -628,11 +767,14 @@ pen_cap_pos_range = {
 6. [x] **IK 환경 추가** (Task Space Control)
 7. [x] **IK V1 학습** - DESCEND 진입 실패 (정렬 조건 못 충족)
 8. [x] **IK V2 수정** - ALIGN 단계 추가 + 펜 캡 위치 기준 생성
-9. [ ] **IK V2 학습 실행 및 결과 확인**
-10. [ ] 성공률 > 50% & 정렬 정밀도 확인 후 2단계 진행
-11. [ ] 2단계: 펜 방향 랜덤화 + Feasibility 데이터 수집
-12. [ ] Feasibility Classifier 학습 (MLP)
-13. [ ] Sim2Real 전이 테스트
+9. [x] **IK V2 학습** - 그리퍼가 펜캡 "위"가 아닌 "옆"으로 접근 (문제 발견)
+10. [x] **IK V3 구현** - 펜 축 기준 접근 + 충돌 페널티 + 단계 체류 페널티
+11. [ ] **IK V3 학습** - 학습 결과 확인
+12. [ ] TensorBoard extras 로깅 추가 (학습 중 거리/정렬 모니터링)
+13. [ ] 성공률 > 50% & 정렬 정밀도 확인 후 2단계 진행
+14. [ ] 2단계: 펜 방향 랜덤화 + Feasibility 데이터 수집
+15. [ ] Feasibility Classifier 학습 (MLP)
+16. [ ] Sim2Real 전이 테스트
 
 ---
 
@@ -646,4 +788,6 @@ pen_cap_pos_range = {
 | 2024-12-18 | V4: 작업 공간 기반 관절 한계 + action_scale 축소 + 특이점 페널티 제거 | - |
 | 2024-12-18 | V5: 관절 한계 확장 (그리퍼 아래 향하도록) | `1d71d76` |
 | 2024-12-18 | IK V1: Task Space Control 환경 추가 | `6318733` |
-| 2024-12-18 | **IK V2**: ALIGN 단계 추가 + 펜 캡 위치 기준 생성 | (현재) |
+| 2024-12-18 | IK V2: ALIGN 단계 추가 + 펜 캡 위치 기준 생성 | - |
+| 2024-12-18 | IK V2 학습 결과: 그리퍼가 펜캡 "옆"으로 접근 문제 발견 | - |
+| 2024-12-19 | **IK V3**: 펜 축 기준 접근 + 충돌 페널티 + 단계 체류 페널티 | (현재) |
