@@ -1152,7 +1152,73 @@ python pen_grasp_rl/scripts/play_ik_v5.py --checkpoint ./path/to/model.pt --leve
 3. 반복해서 Level 3까지 진행
 4. 발산 발생 시 `--fixed_lr` 옵션 사용
 
-**학습 결과**: (학습 후 업데이트 예정)
+**학습 결과**:
+
+### V5.2 학습 결과 (2024-12-22)
+
+**변경사항 (V5.1 → V5.2)**:
+- 단계 전환 조건 강화: 자세 + 위치 동시 체크
+  - ALIGN → FINE_ALIGN: `dot < -0.85 AND perp_dist < 4cm`
+  - FINE_ALIGN → DESCEND: `dot < -0.98 AND perp_dist < 3cm`
+
+**학습 결과** (2000 steps):
+
+| 지표 | V5.0 | V5.2 | 변화 |
+|------|------|------|------|
+| Mean Reward | 1,192 | **2,553** | +114% |
+| Episode Length | 449 | 449 | 동일 |
+| Noise Std | 0.69 | 1.32 | 아직 탐색 중 |
+
+**학습 그래프**:
+
+![V5.2 Training](images/e0509_ik_v5.2_training.png)
+
+**Play 테스트 문제 발견**:
+- 그리퍼가 **앞으로 드러눕는** 현상 발생
+- `perp_dist`가 0.08~0.13m로 조건 미충족
+- `dot`이 -0.4 ~ -0.7로 정렬 안 됨
+- `on_correct_side`가 100% → 0%로 감소
+
+![V5.2 Forward Tilt Bug](images/e0509_ik_v5.2_forward_tilt_bug.png)
+
+**원인 분석**:
+```
+APPROACH: perp_dist 줄이기 ✅
+ALIGN: 자세만 reward, perp_dist reward 없음 ❌
+→ RL: "perp_dist 커져도 상관없네, 자세만 맞추자"
+→ 멀리서 펜을 향해 기울임 → 앞으로 드러눕음
+```
+
+### V5.3 수정 (2024-12-22)
+
+**핵심 변경: End-to-End 스타일 Reward**
+
+모든 RL 단계에서 위치 + 자세를 동시에 reward:
+
+| 단계 | 기존 (V5.2) | 수정 (V5.3) |
+|------|-------------|-------------|
+| APPROACH | 위치만 | 위치 + **자세 추가** |
+| ALIGN | 자세만 | **위치 + 자세** |
+
+**수정된 Reward 구조**:
+```python
+# APPROACH (V5.3)
+perp_dist↓ + axis_dist↓ + orientation↑ (0.5 weight)
+
+# ALIGN (V5.3)
+perp_dist↓ + orientation↑ + exponential_bonus + on_axis_bonus
+```
+
+**기대 효과**:
+- RL이 모든 단계에서 위치와 자세를 동시에 학습
+- 앞으로 드러눕는 현상 해결
+- 자연스러운 접근 동작
+
+**학습 명령어**:
+```bash
+source ~/isaacsim_env/bin/activate && cd ~/IsaacLab
+python pen_grasp_rl/scripts/train_ik_v5.py --headless --num_envs 4096 --max_iterations 3500 --level 0
+```
 
 ---
 
@@ -1177,11 +1243,14 @@ python pen_grasp_rl/scripts/play_ik_v5.py --checkpoint ./path/to/model.pt --leve
 17. [x] **IK V4 + 각도 랜덤화 (Z축 원뿔)** - Mean Reward 1,152 달성 (3500 steps)
 18. [x] **IK V4 Play 테스트** - TCP DESCEND 버그 발견 (그리퍼 바닥으로 꼬라박음)
 19. [x] **IK V5 구현** - TCP 버그 수정 + Curriculum Learning
-20. [ ] **IK V5 Level 0 학습** - 펜 수직, 기본 동작 학습 ← 현재
-21. [ ] **IK V5 Level 1~3 학습** - 점진적 난이도 증가
-22. [ ] 성공률 > 50% 확인 후 다음 단계 진행
-23. [ ] Feasibility Classifier 학습 (MLP)
-24. [ ] Sim2Real 전이 테스트
+20. [x] **IK V5.2 학습** - 전환 조건 강화 (자세+위치), Mean Reward 2,553 (+114%)
+21. [x] **IK V5.2 Play 테스트** - 앞으로 드러눕는 문제 발견 (ALIGN에서 위치 reward 없음)
+22. [x] **IK V5.3 수정** - End-to-End 스타일 reward (모든 단계에서 위치+자세 동시)
+23. [ ] **IK V5.3 학습** - 펜 수직, 기본 동작 학습 ← 현재
+24. [ ] **IK V5 Level 1~3 학습** - 점진적 난이도 증가
+25. [ ] 성공률 > 50% 확인 후 다음 단계 진행
+26. [ ] Feasibility Classifier 학습 (MLP)
+27. [ ] Sim2Real 전이 테스트
 
 ---
 
@@ -1206,4 +1275,7 @@ python pen_grasp_rl/scripts/play_ik_v5.py --checkpoint ./path/to/model.pt --leve
 | 2024-12-19 | **IK V4 + 각도 랜덤화 (Z축 원뿔)**: 정확한 최대 30도 기울기 제한 | `712c927` |
 | 2024-12-22 | **IK V4 + 각도 랜덤화 학습**: Mean Reward 1,152 (3500 steps) | - |
 | 2024-12-22 | **IK V4 Play 테스트**: TCP DESCEND 버그 발견 (그리퍼 바닥으로 꼬라박음) | - |
-| 2024-12-22 | **IK V5 구현**: TCP 버그 수정 (월드 Z축 하강) + Curriculum Learning | (현재) |
+| 2024-12-22 | **IK V5 구현**: TCP 버그 수정 (월드 Z축 하강) + Curriculum Learning | `fa8b330` |
+| 2024-12-22 | **IK V5.2**: 전환 조건 강화 (자세+위치 동시 체크) | `18345f4` |
+| 2024-12-22 | **IK V5.2 학습**: Mean Reward 2,553 (+114%), Play에서 앞으로 드러눕는 문제 발견 | - |
+| 2024-12-22 | **IK V5.3**: End-to-End 스타일 reward (모든 단계에서 위치+자세 동시) | (현재) |

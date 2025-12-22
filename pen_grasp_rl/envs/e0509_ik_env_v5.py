@@ -1,5 +1,11 @@
 """
-E0509 IK 환경 V5.2 (Hybrid RL + TCP + Curriculum Learning)
+E0509 IK 환경 V5.3 (Hybrid RL + TCP + End-to-End Reward)
+
+=== V5.3 변경사항 (V5.2 대비) ===
+1. End-to-End 스타일 Reward: 모든 RL 단계에서 위치 + 자세 동시 reward
+   - APPROACH: 기존 위치 reward + 자세 정렬 reward 추가
+   - ALIGN: position_hold 제거 → perp_dist reward 추가 (펜 축으로 이동 유도)
+2. 각 단계에서 이전 조건 유지하도록 reward 구조 변경
 
 === V5.2 변경사항 (V5.1 대비) ===
 1. 단계 전환 조건 강화: 자세 + 위치 동시 체크
@@ -9,29 +15,21 @@ E0509 IK 환경 V5.2 (Hybrid RL + TCP + Curriculum Learning)
 === V5.1 변경사항 (V5 대비) ===
 1. DESCEND 방향 수정: 월드 Z축 → 펜 캡 방향으로 이동
 
-=== V5 변경사항 (V4 대비) ===
-1. TCP DESCEND 버그 수정: 펜 축 방향 → 월드 Z축 방향 하강
-2. 자세 보정 속도 증가: DESCEND 중 자세 유지력 강화
-3. Curriculum Learning: 펜 각도 점진적 증가 (0° → 10° → 20° → 30°)
-4. 정밀 정렬 보상 강화: dot < -0.95 이상에서 exponential 보상
-
 === Curriculum Levels ===
 Level 0: 펜 수직 (tilt_max = 0°)     - 기본 동작 학습
 Level 1: 펜 10° 기울기               - 약간의 변형 적응
 Level 2: 펜 20° 기울기               - 중간 난이도
 Level 3: 펜 30° 기울기               - 최종 목표
 
-=== Hybrid 접근 방식 ===
-[RL 정책] → 대략적 접근
-              ↓
-        조건 달성? (perp < 4cm, dot < -0.85)
-              ↓
-[TCP 제어] → 정밀 정렬 (perp < 3cm, dot < -0.98) → 펜 캡 방향 하강 + 그립
+=== Reward 구조 (V5.3 End-to-End 스타일) ===
+APPROACH: perp_dist↓ + axis_dist↓ + orientation↑ (위치 + 자세 동시)
+ALIGN:    perp_dist↓ + orientation↑ + exponential_bonus (위치 + 자세 동시)
+FINE_ALIGN/DESCEND/GRASP: TCP 제어
 
 === 단계 (Phase) ===
-0. APPROACH: 펜 축 방향에서 접근
-1. ALIGN: 자세 정렬 (RL) - 위치도 맞춰야 다음 단계
-2. FINE_ALIGN: 정밀 자세 정렬 (TCP) - 위치도 맞춰야 다음 단계
+0. APPROACH: 펜 축 방향에서 접근 + 자세 정렬 시작
+1. ALIGN: 위치 미세조정 + 자세 정렬 완료
+2. FINE_ALIGN: 정밀 자세 정렬 (TCP)
 3. DESCEND: 펜 캡 방향 하강 + 자세 유지 (TCP)
 4. GRASP: 그리퍼 닫기
 """
@@ -612,30 +610,37 @@ class E0509IKEnvV5(DirectRLEnv):
         self.phase_step_count += 1
 
         # =========================================================
-        # APPROACH 단계 (RL)
+        # APPROACH 단계 (RL) - V5.3: 위치 + 자세 동시 reward
         # =========================================================
         approach_mask = (self.phase == PHASE_APPROACH)
         if approach_mask.any():
+            # 위치 reward (기존)
             rewards[approach_mask] += self.cfg.rew_scale_perp_dist * perpendicular_dist[approach_mask]
             rewards[approach_mask] += self.cfg.rew_scale_axis_dist * torch.abs(axis_distance[approach_mask] + PRE_GRASP_AXIS_DIST)
 
-            on_axis = perpendicular_dist[approach_mask] < 0.05  # V4: 완화
+            on_axis = perpendicular_dist[approach_mask] < 0.05
             rewards[approach_mask] += self.cfg.rew_scale_on_axis_bonus * on_axis.float()
 
             progress = self.prev_axis_distance[approach_mask] - torch.abs(axis_distance[approach_mask] + PRE_GRASP_AXIS_DIST)
             rewards[approach_mask] += self.cfg.rew_scale_approach_progress * torch.clamp(progress, min=0)
 
+            # V5.3 추가: 자세 정렬 reward (ALIGN과 동일)
+            approach_align_quality = (-dot_product[approach_mask] - 0.5) / 0.5
+            rewards[approach_mask] += self.cfg.rew_scale_align_orientation * 0.5 * torch.clamp(approach_align_quality, min=0)
+
         # =========================================================
-        # ALIGN 단계 (RL)
+        # ALIGN 단계 (RL) - V5.3: 위치 + 자세 동시 reward
         # =========================================================
         align_mask = (self.phase == PHASE_ALIGN)
         if align_mask.any():
-            distance_from_target = torch.norm(grasp_pos[align_mask] - self.align_target_pos[align_mask], dim=-1)
-            rewards[align_mask] += self.cfg.rew_scale_align_position_hold * distance_from_target
+            # V5.3 수정: position_hold 대신 perp_dist reward (펜 축으로 이동 유도)
+            rewards[align_mask] += self.cfg.rew_scale_perp_dist * perpendicular_dist[align_mask]
 
+            # 자세 정렬 reward (기존)
             align_quality = (-dot_product[align_mask] - 0.5) / 0.5
             rewards[align_mask] += self.cfg.rew_scale_align_orientation * torch.clamp(align_quality, min=0)
 
+            # 정밀 정렬 보너스 (기존)
             align_value = -dot_product[align_mask]
             exponential_bonus = torch.where(
                 align_value > self.cfg.exponential_align_threshold,
@@ -643,6 +648,10 @@ class E0509IKEnvV5(DirectRLEnv):
                 torch.ones_like(align_value)
             )
             rewards[align_mask] += self.cfg.rew_scale_exponential_align * exponential_bonus
+
+            # V5.3 추가: 펜 축에 가까워지면 보너스
+            on_axis_align = perpendicular_dist[align_mask] < 0.04
+            rewards[align_mask] += self.cfg.rew_scale_on_axis_bonus * on_axis_align.float()
 
         # =========================================================
         # FINE_ALIGN 단계 (TCP) - 고정 보상
