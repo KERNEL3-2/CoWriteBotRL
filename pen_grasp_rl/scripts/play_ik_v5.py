@@ -116,7 +116,7 @@ def main():
 
     tilt_deg = CURRICULUM_TILT_MAX[args.level] * 180 / 3.14159
     print("=" * 70)
-    print("E0509 IK V5 테스트 시작 (Curriculum Learning)")
+    print("E0509 IK V5.4 테스트 시작 (Curriculum Learning + LIFT)")
     print("=" * 70)
     print(f"  Curriculum Level: {args.level} (펜 최대 기울기: {tilt_deg:.0f}°)")
     print(f"  환경 수: {args.num_envs}")
@@ -124,16 +124,18 @@ def main():
     print(f"  관찰 차원: {obs_dim}")
     print(f"  액션 차원: {action_dim} (Δx, Δy, Δz, Δroll, Δpitch, Δyaw)")
     print("=" * 70)
-    print("V5 핵심 변경사항:")
-    print("  - TCP DESCEND: 월드 Z축 방향 하강 (펜 축 방향 X)")
-    print("  - 자세 보정 속도 강화 (0.5 → 1.5)")
+    print("V5.4 핵심 변경사항:")
+    print("  - PHASE_LIFT 추가: 펜 5cm 들어올리기 → 성공")
+    print("  - 그리퍼 닫기 강화: 0.7 → 1.0")
+    print("  - 성공 조건: perp_dist<5mm, dot<-0.99")
     print("=" * 70)
-    print("단계 (Phase):")
+    print("단계 (Phase) - 6단계:")
     print("  0: APPROACH - RL: 펜 축 방향에서 접근")
     print("  1: ALIGN - RL: 대략적 자세 정렬")
     print("  2: FINE_ALIGN - TCP: 정밀 자세 정렬 (dot → -0.98)")
-    print("  3: DESCEND - TCP: 월드 Z축 하강 + 자세 유지")
-    print("  4: GRASP - TCP: 그리퍼 닫기")
+    print("  3: DESCEND - TCP: 펜 캡 방향 하강")
+    print("  4: GRASP - TCP: 그리퍼 닫기 (30스텝)")
+    print("  5: LIFT - TCP: 펜 들어올리기 5cm → 성공")
     print("=" * 70)
 
     # 테스트 루프
@@ -164,17 +166,29 @@ def main():
             pen_z = env._get_pen_z_axis()
             dot = torch.sum(gripper_z * pen_z, dim=-1)
 
+            # 그리퍼 관절 위치 (Good Grasp 체크용)
+            gripper_pos = env.robot.data.joint_pos[:, env._gripper_joint_ids]
+            gripper_amount = gripper_pos.mean(dim=-1)
+
+            # Good Grasp 조건 체크
+            good_grasp = (
+                (perp_dist < 0.008) & (dot < -0.98) &
+                (gripper_amount > 0.8) & (gripper_amount < 1.05)
+            )
+            good_grasp_pct = good_grasp.float().mean().item() * 100
+
             mean_reward = rewards.mean().item()
 
             print(f"\nStep {step}: reward={mean_reward:.4f}, "
                   f"phases=[APP:{phase_stats['approach']}, ALN:{phase_stats['align']}, "
                   f"FINE:{phase_stats['fine_align']}, DESC:{phase_stats['descend']}, "
-                  f"GRP:{phase_stats['grasp']}], success={phase_stats['total_success']}")
-            print(f"  → perp_dist={perp_dist.mean().item():.4f}m (need <0.05), "
+                  f"GRP:{phase_stats['grasp']}, LIFT:{phase_stats['lift']}], success={phase_stats['total_success']}")
+            print(f"  → perp_dist={perp_dist.mean().item():.4f}m (need <0.008), "
                   f"axis_dist={axis_dist.mean().item():.4f}m")
             print(f"  → dist_cap={dist_to_cap.mean().item():.4f}m, "
-                  f"dot={dot.mean().item():.4f} (ALIGN needs <-0.85, FINE needs <-0.98)")
-            print(f"  → on_correct_side={on_correct_side.float().mean().item()*100:.1f}%")
+                  f"dot={dot.mean().item():.4f} (need <-0.98)")
+            print(f"  → gripper_amount={gripper_amount.mean().item():.3f} (need 0.8~1.05), "
+                  f"good_grasp={good_grasp_pct:.1f}%")
 
     # 최종 결과
     final_stats = env.get_phase_stats()
@@ -186,7 +200,8 @@ def main():
     print(f"최종 단계 분포:")
     print(f"  APPROACH={final_stats['approach']}, ALIGN={final_stats['align']}, "
           f"FINE_ALIGN={final_stats['fine_align']}")
-    print(f"  DESCEND={final_stats['descend']}, GRASP={final_stats['grasp']}")
+    print(f"  DESCEND={final_stats['descend']}, GRASP={final_stats['grasp']}, "
+          f"LIFT={final_stats['lift']}")
     print("=" * 70)
 
     env.close()

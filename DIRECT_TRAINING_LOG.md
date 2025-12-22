@@ -1200,24 +1200,78 @@ ALIGN: 자세만 reward, perp_dist reward 없음 ❌
 | APPROACH | 위치만 | 위치 + **자세 추가** |
 | ALIGN | 자세만 | **위치 + 자세** |
 
-**수정된 Reward 구조**:
-```python
-# APPROACH (V5.3)
-perp_dist↓ + axis_dist↓ + orientation↑ (0.5 weight)
-
-# ALIGN (V5.3)
-perp_dist↓ + orientation↑ + exponential_bonus + on_axis_bonus
+**V5.3 Play 테스트 결과** (5000 steps):
+```
+Step 100: phases=[APP:0, ALN:0, FINE:0, DESC:5, GRP:11], success=106
 ```
 
-**기대 효과**:
-- RL이 모든 단계에서 위치와 자세를 동시에 학습
-- 앞으로 드러눕는 현상 해결
-- 자연스러운 접근 동작
+**핵심 성과**: success=106 달성! (V5.2의 0에서 대폭 개선)
+
+**문제점 발견**:
+1. 그리퍼가 완전히 닫히지 않음 (gripper_target=0.7)
+2. GRASP 후 로봇팔이 아래로 흘러내림
+3. 펜을 "잡았는지" 판단할 조건 없음
+
+---
+
+### V5.4 수정 (2024-12-22)
+
+**핵심 변경: PHASE_LIFT + Good Grasp 조건**
+
+**1. PHASE_LIFT 추가 (6단계)**:
+```
+0. APPROACH: 펜 축 방향에서 접근 (RL)
+1. ALIGN: 자세 정렬 (RL)
+2. FINE_ALIGN: 정밀 정렬 (TCP)
+3. DESCEND: 펜 캡 방향 하강 (TCP)
+4. GRASP: 그리퍼 닫기 + 30스텝 유지 (TCP)
+5. LIFT: 펜 5cm 들어올리기 → 성공! (TCP)  ← 신규
+```
+
+**2. Good Grasp 조건 (펜이 제대로 잡혔는지 판단)**:
+```python
+good_grasp = (
+    (perp_dist < 0.008) &           # 펜 축과 일치 (8mm)
+    (dot < -0.98) &                 # 자세 정렬
+    (gripper_amount > 0.8) &        # 그리퍼가 어느정도 닫힘
+    (gripper_amount < 1.05)         # 완전히 닫힌 건 아님 (펜이 사이에 있음)
+)
+```
+
+**원리**:
+- 그리퍼에 1.1로 닫기 명령 → 펜이 있으면 ~0.9에서 멈춤 (펜에 걸림)
+- 펜이 없으면 1.1까지 완전히 닫힘 → good_grasp 실패 (헛잡음)
+
+**3. 그리퍼 닫기 강화**:
+- `GRIPPER_CLOSE_TARGET`: 0.7 → **1.1** (확실히 닫으려고 시도)
+
+**4. 성공 조건 변경**:
+- 기존: `dist < 5mm & dot < -0.99 & gripper_closed`
+- V5.4: `LIFT 완료 & good_grasp` (펜을 들어올렸고 + 제대로 잡고 있음)
+
+**상수 설정**:
+```python
+# GRASP/LIFT 설정
+GRIPPER_CLOSE_TARGET = 1.1        # 확실히 닫으려고 시도
+LIFT_HEIGHT = 0.05                # 들어올리기 높이 5cm
+LIFT_SPEED = 0.003                # 들어올리기 속도
+
+# Good Grasp 조건
+GOOD_GRASP_GRIPPER_MIN = 0.8      # 그리퍼가 어느정도 닫힘
+GOOD_GRASP_GRIPPER_MAX = 1.05     # 완전히 닫힌 건 아님
+GOOD_GRASP_PERP_DIST = 0.008      # 펜 축과 일치 (8mm)
+GOOD_GRASP_DOT = -0.98            # 자세 정렬
+```
 
 **학습 명령어**:
 ```bash
 source ~/isaacsim_env/bin/activate && cd ~/IsaacLab
-python pen_grasp_rl/scripts/train_ik_v5.py --headless --num_envs 4096 --max_iterations 3500 --level 0
+python pen_grasp_rl/scripts/train_ik_v5.py --headless --num_envs 4096 --max_iterations 5000 --level 0
+```
+
+**테스트 명령어**:
+```bash
+python pen_grasp_rl/scripts/play_ik_v5.py --checkpoint /path/to/model.pt --level 0
 ```
 
 ---
@@ -1246,11 +1300,13 @@ python pen_grasp_rl/scripts/train_ik_v5.py --headless --num_envs 4096 --max_iter
 20. [x] **IK V5.2 학습** - 전환 조건 강화 (자세+위치), Mean Reward 2,553 (+114%)
 21. [x] **IK V5.2 Play 테스트** - 앞으로 드러눕는 문제 발견 (ALIGN에서 위치 reward 없음)
 22. [x] **IK V5.3 수정** - End-to-End 스타일 reward (모든 단계에서 위치+자세 동시)
-23. [ ] **IK V5.3 학습** - 펜 수직, 기본 동작 학습 ← 현재
-24. [ ] **IK V5 Level 1~3 학습** - 점진적 난이도 증가
-25. [ ] 성공률 > 50% 확인 후 다음 단계 진행
-26. [ ] Feasibility Classifier 학습 (MLP)
-27. [ ] Sim2Real 전이 테스트
+23. [x] **IK V5.3 Play 테스트** - success=106 달성! 그리퍼 닫기/LIFT 문제 발견
+24. [x] **IK V5.4 수정** - PHASE_LIFT 추가 + Good Grasp 조건 + 그리퍼 1.1
+25. [ ] **IK V5.4 학습** - 펜 수직, 6단계 완전한 작업 ← 현재
+26. [ ] **IK V5 Level 1~3 학습** - 점진적 난이도 증가
+27. [ ] 성공률 > 50% 확인 후 다음 단계 진행
+28. [ ] Feasibility Classifier 학습 (MLP)
+29. [ ] Sim2Real 전이 테스트
 
 ---
 
@@ -1278,4 +1334,6 @@ python pen_grasp_rl/scripts/train_ik_v5.py --headless --num_envs 4096 --max_iter
 | 2024-12-22 | **IK V5 구현**: TCP 버그 수정 (월드 Z축 하강) + Curriculum Learning | `fa8b330` |
 | 2024-12-22 | **IK V5.2**: 전환 조건 강화 (자세+위치 동시 체크) | `18345f4` |
 | 2024-12-22 | **IK V5.2 학습**: Mean Reward 2,553 (+114%), Play에서 앞으로 드러눕는 문제 발견 | - |
-| 2024-12-22 | **IK V5.3**: End-to-End 스타일 reward (모든 단계에서 위치+자세 동시) | (현재) |
+| 2024-12-22 | **IK V5.3**: End-to-End 스타일 reward (모든 단계에서 위치+자세 동시) | - |
+| 2024-12-22 | **IK V5.3 Play 테스트**: success=106 달성! 그리퍼 닫기/LIFT 문제 발견 | - |
+| 2024-12-22 | **IK V5.4**: PHASE_LIFT 추가 + Good Grasp 조건 + 그리퍼 1.1 | (현재) |
