@@ -1263,10 +1263,47 @@ GOOD_GRASP_PERP_DIST = 0.008      # 펜 축과 일치 (8mm)
 GOOD_GRASP_DOT = -0.98            # 자세 정렬
 ```
 
+**V5.3 학습 분석 (1532 iterations) - Adaptive LR 문제점**:
+
+![V5.3 Adaptive LR Analysis](images/v5_3_adaptive_lr_analysis.png)
+
+| 지표 | 초기값 | 최종값 | 문제점 |
+|------|--------|--------|--------|
+| Mean Reward | ~0 | **2,054** | ✓ 좋음 |
+| Value Loss | ~200 | 1~1,098 (진동) | ❌ 안정화 안 됨 |
+| Noise Std | 0.20 | **0.64** | ❌ 증가 (정상: 감소해야 함) |
+| Learning Rate | 1.17e-05 | **1.00e-05** | ❌ 거의 0 수렴 |
+
+**Adaptive LR 문제점 분석**:
+
+1. **Value Loss 진동**: 202 → 37 → 196 → 26 → 4 → 61 (불안정)
+   - 원인: Learning Rate가 너무 빨리 감소하여 학습이 제대로 안 됨
+
+2. **Noise Std 증가**: 0.20 → 0.64 (비정상!)
+   - 정상적인 학습: Noise Std가 **감소**해야 함 (탐색 → 활용)
+   - 증가 = Policy가 불확실해지고 있음
+
+3. **Learning Rate 소멸**: ~0.00001 (거의 0)
+   - Adaptive LR이 KL Divergence 기반으로 조절
+   - 불안정한 상황에서 LR을 과도하게 줄임 → 학습 정체
+
+**Fixed LR 권장 이유**:
+
+| 항목 | Adaptive LR | Fixed LR |
+|------|-------------|----------|
+| 장점 | 자동 조절 | 안정적, 예측 가능 |
+| 단점 | 불안정 시 폭주/소멸 | 수동 튜닝 필요 |
+| 복잡한 환경 | ❌ 위험 | ✓ 안전 |
+| 권장 상황 | 단순 환경 | **다단계 환경, Curriculum** |
+
+**결론**: V5.4 학습 시 `--fixed_lr` 옵션 사용 권장
+
 **학습 명령어**:
 ```bash
 source ~/isaacsim_env/bin/activate && cd ~/IsaacLab
-python pen_grasp_rl/scripts/train_ik_v5.py --headless --num_envs 4096 --max_iterations 5000 --level 0
+
+# Fixed LR 사용 (권장)
+python pen_grasp_rl/scripts/train_ik_v5.py --headless --num_envs 4096 --max_iterations 5000 --level 0 --fixed_lr
 ```
 
 **테스트 명령어**:
