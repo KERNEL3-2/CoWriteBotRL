@@ -35,6 +35,10 @@ from .target_tracking_env import TargetTrackingEnv, TargetTrackingEnvCfg, Target
 from .e0509_ik_env import E0509IKEnv, E0509IKEnvCfg, E0509IKEnvCfg_PLAY
 from .e0509_ik_env_v3 import E0509IKEnvV3, E0509IKEnvV3Cfg, E0509IKEnvV3Cfg_PLAY
 from .e0509_ik_env_v4 import E0509IKEnvV4, E0509IKEnvV4Cfg, E0509IKEnvV4Cfg_PLAY
+from .e0509_ik_env_v5 import (
+    E0509IKEnvV5, E0509IKEnvV5Cfg, E0509IKEnvV5Cfg_PLAY,
+    E0509IKEnvV5Cfg_L0, E0509IKEnvV5Cfg_L1, E0509IKEnvV5Cfg_L2, E0509IKEnvV5Cfg_L3,
+)
 
 __all__ = [
     # Manager-Based
@@ -50,4 +54,6 @@ __all__ = [
     "E0509IKEnv", "E0509IKEnvCfg", "E0509IKEnvCfg_PLAY",
     "E0509IKEnvV3", "E0509IKEnvV3Cfg", "E0509IKEnvV3Cfg_PLAY",
     "E0509IKEnvV4", "E0509IKEnvV4Cfg", "E0509IKEnvV4Cfg_PLAY",
+    "E0509IKEnvV5", "E0509IKEnvV5Cfg", "E0509IKEnvV5Cfg_PLAY",
+    "E0509IKEnvV5Cfg_L0", "E0509IKEnvV5Cfg_L1", "E0509IKEnvV5Cfg_L2", "E0509IKEnvV5Cfg_L3",
 ]

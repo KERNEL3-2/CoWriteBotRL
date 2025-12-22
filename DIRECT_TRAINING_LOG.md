@@ -1003,6 +1003,155 @@ yaw = random(-π, π)             # 펜 자체 회전
 - 체크포인트 없이 **처음부터 새로 학습**
 - Fixed LR 사용 권장 (안정성)
 
+**학습 결과** (3500 steps):
+
+| Iteration | Mean Reward | Episode Length | Noise Std | 비고 |
+|-----------|-------------|----------------|-----------|------|
+| 0 | -531 | 21 | 1.58 | 초기 |
+| ~500 | ~1,100 | ~449 | ~1.0 | 빠른 수렴 |
+| 3500 | **1,152** | **449 (max)** | 0.96 | 최종 |
+
+**학습 그래프**:
+
+![E0509 IK V4 + Angle Randomization Training (3500 steps)](images/e0509_ik_v4_angle_training_3500.png)
+
+**학습 메트릭 분석**:
+
+| 메트릭 | 초기값 | 최종값 | 평가 |
+|--------|--------|--------|------|
+| Mean Reward | -531 | **1,152** | ✓ 매우 좋음 |
+| Episode Length | 21 | **449 (max)** | ✓ 완벽 |
+| Noise Std | 1.58 | **0.96** | ⚠️ 약간 높음 (이상적: 0.2~0.5) |
+| Value Loss | 363 → 20 | 20.2 | ✓ 안정화 |
+| Learning Rate | 0.01 | **~0** | ⚠️ Adaptive LR이 너무 빨리 감소 |
+
+**Play 테스트 결과**:
+
+```
+Step 0: reward=-2.3859, phases=[APP:32, ALN:0, FINE:0, DESC:0, GRP:0], success=0
+  → perp_dist=0.1758m (need <0.05), axis_dist=-0.4606m
+  → dist_cap=0.4991m, dot=-0.3049
+
+Step 100: reward=0.0081, phases=[APP:0, ALN:0, FINE:5, DESC:27, GRP:0], success=10
+  → perp_dist=0.0513m, axis_dist=0.0418m
+  → dist_cap=0.0781m, dot=-0.8964
+  → on_correct_side=31.2%
+
+Step 400: reward=0.4728, phases=[APP:0, ALN:0, FINE:2, DESC:29, GRP:1], success=11
+  → perp_dist=0.0938m, axis_dist=0.1550m
+  → dist_cap=0.1928m, dot=-0.5313
+  → on_correct_side=12.5%
+```
+
+**Play 테스트 스크린샷** (문제 발생):
+
+![E0509 IK V4 DESCEND Bug](images/e0509_ik_v4_descend_bug.png)
+
+*그리퍼가 DESCEND 단계에서 자세를 유지하지 못하고 바닥으로 꼬라박는 모습*
+
+**문제점 발견**:
+
+1. **TCP DESCEND 하강 방향 버그**:
+   - 기존 코드: `descend_dir = -pen_z` (펜 축 반대 방향)
+   - 문제: 펜이 기울어지면 하강 방향도 기울어져서 옆으로 이동
+   - 결과: 그리퍼가 바닥으로 꼬라박음
+
+2. **자세 보정 속도 부족**:
+   - 기존: `rotation_delta = angle * 0.5`
+   - 하강 중 자세가 틀어지는 속도보다 보정이 느림
+   - dot 값이 점점 악화 (-0.89 → -0.53)
+
+3. **on_correct_side 급감**:
+   - Step 0: 100% → Step 400: 12.5%
+   - 그리퍼가 펜의 올바른 방향에서 접근하지 못함
+
+**결론**: TCP DESCEND 버그 수정 + 정확도 향상을 위한 Curriculum Learning 필요 → **IK V5**
+
+---
+
+### IK V5 (TCP 버그 수정 + Curriculum Learning)
+
+**날짜**: 2024-12-22
+
+**V4 문제 분석**:
+- TCP DESCEND 방향이 펜 축 방향(-pen_z)으로 되어 있어, 펜이 기울어지면 그리퍼가 옆으로 이동
+- 자세 보정 속도가 하강 속도를 따라가지 못함
+- 처음부터 30도 기울기로 학습하면 기본 동작 학습이 어려움
+
+**V5 핵심 변경사항**:
+
+**1. TCP DESCEND 버그 수정**:
+```python
+# 기존 (V4): 펜 축 방향 하강 (기울어지면 옆으로 이동)
+descend_dir = -pen_z[descend_mask]
+
+# 수정 (V5): 월드 Z축 방향 하강 (항상 아래로)
+descend_dir = torch.zeros(num_descend, 3, device=self.device)
+descend_dir[:, 2] = -1.0  # 월드 Z축 아래 방향
+```
+
+**2. 자세 보정 속도 강화**:
+```python
+# 기존 (V4)
+rotation_delta = torch.clamp(angle, max=FINE_ALIGN_ROTATION_SPEED * 0.5)
+
+# 수정 (V5)
+DESCEND_POSE_CORRECTION_GAIN = 1.5  # 기존 0.5 → 1.5
+rotation_delta = torch.clamp(angle, max=FINE_ALIGN_ROTATION_SPEED * DESCEND_POSE_CORRECTION_GAIN)
+```
+
+**3. Curriculum Learning**:
+
+| Level | 펜 최대 기울기 | 설명 |
+|-------|---------------|------|
+| 0 | 0° (수직) | 기본 동작 학습 |
+| 1 | 10° | 약간의 변형 적응 |
+| 2 | 20° | 중간 난이도 |
+| 3 | 30° | 최종 목표 |
+
+**4. 기타 상수 조정**:
+| 상수 | V4 | V5 |
+|------|-----|-----|
+| FINE_ALIGN_ROTATION_SPEED | 0.02 | **0.03** |
+| DESCEND_SPEED | 0.003 | **0.002** (더 정밀) |
+
+**파일 구조**:
+```
+pen_grasp_rl/
+├── envs/
+│   └── e0509_ik_env_v5.py   # V5 환경 (TCP 수정 + Curriculum)
+└── scripts/
+    ├── train_ik_v5.py       # 학습 (--level 옵션)
+    └── play_ik_v5.py        # 테스트
+```
+
+**실행 방법**:
+
+```bash
+# 1. IsaacLab으로 동기화
+cp ~/CoWriteBotRL/pen_grasp_rl/envs/e0509_ik_env_v5.py ~/IsaacLab/pen_grasp_rl/envs/
+cp ~/CoWriteBotRL/pen_grasp_rl/envs/__init__.py ~/IsaacLab/pen_grasp_rl/envs/
+cp ~/CoWriteBotRL/pen_grasp_rl/scripts/train_ik_v5.py ~/IsaacLab/pen_grasp_rl/scripts/
+cp ~/CoWriteBotRL/pen_grasp_rl/scripts/play_ik_v5.py ~/IsaacLab/pen_grasp_rl/scripts/
+
+# 2. Level 0 학습 시작 (펜 수직)
+cd ~/IsaacLab && source ~/isaacsim_env/bin/activate
+python pen_grasp_rl/scripts/train_ik_v5.py --headless --num_envs 4096 --level 0
+
+# 3. Level 0 완료 후 → Level 1 학습
+python pen_grasp_rl/scripts/train_ik_v5.py --headless --num_envs 4096 --level 1 \
+    --checkpoint ./pen_grasp_rl/logs/e0509_ik_v5_l0/model_4999.pt
+
+# 4. 테스트
+python pen_grasp_rl/scripts/play_ik_v5.py --checkpoint ./path/to/model.pt --level 0
+```
+
+**학습 전략**:
+1. Level 0에서 수렴시키기 (5000 iterations)
+2. Level 1로 체크포인트 이어서 학습 (3000~5000 iterations)
+3. 반복해서 Level 3까지 진행
+4. 발산 발생 시 `--fixed_lr` 옵션 사용
+
 **학습 결과**: (학습 후 업데이트 예정)
 
 ---
@@ -1025,10 +1174,14 @@ yaw = random(-π, π)             # 펜 자체 회전
 14. [x] **IK V4 학습** - success=3, DESCEND 진입 성공!
 15. [x] **IK V4 Play 테스트** - Hybrid 접근 검증 성공
 16. [x] **IK V4 + 각도 랜덤화 (roll/pitch)** - 발산 (Adaptive LR + Noise Std 폭발)
-17. [ ] **IK V4 + 각도 랜덤화 (Z축 원뿔)** - 처음부터 새로 학습 ← 현재
-18. [ ] 성공률 > 50% 확인 후 다음 단계 진행
-19. [ ] Feasibility Classifier 학습 (MLP)
-20. [ ] Sim2Real 전이 테스트
+17. [x] **IK V4 + 각도 랜덤화 (Z축 원뿔)** - Mean Reward 1,152 달성 (3500 steps)
+18. [x] **IK V4 Play 테스트** - TCP DESCEND 버그 발견 (그리퍼 바닥으로 꼬라박음)
+19. [x] **IK V5 구현** - TCP 버그 수정 + Curriculum Learning
+20. [ ] **IK V5 Level 0 학습** - 펜 수직, 기본 동작 학습 ← 현재
+21. [ ] **IK V5 Level 1~3 학습** - 점진적 난이도 증가
+22. [ ] 성공률 > 50% 확인 후 다음 단계 진행
+23. [ ] Feasibility Classifier 학습 (MLP)
+24. [ ] Sim2Real 전이 테스트
 
 ---
 
@@ -1050,4 +1203,7 @@ yaw = random(-π, π)             # 펜 자체 회전
 | 2024-12-19 | **IK V4**: Hybrid RL + TCP Control | - |
 | 2024-12-19 | **IK V4 학습**: success=3, DESCEND 진입 성공 (1470 iter) | - |
 | 2024-12-19 | **IK V4 + 각도 랜덤화 (roll/pitch)**: 발산 (Noise Std 10.5+, Adaptive LR 폭주) | `1a1f93f` |
-| 2024-12-19 | **IK V4 + 각도 랜덤화 (Z축 원뿔)**: 정확한 최대 30도 기울기 제한 | (현재) |
+| 2024-12-19 | **IK V4 + 각도 랜덤화 (Z축 원뿔)**: 정확한 최대 30도 기울기 제한 | `712c927` |
+| 2024-12-22 | **IK V4 + 각도 랜덤화 학습**: Mean Reward 1,152 (3500 steps) | - |
+| 2024-12-22 | **IK V4 Play 테스트**: TCP DESCEND 버그 발견 (그리퍼 바닥으로 꼬라박음) | - |
+| 2024-12-22 | **IK V5 구현**: TCP 버그 수정 (월드 Z축 하강) + Curriculum Learning | (현재) |
