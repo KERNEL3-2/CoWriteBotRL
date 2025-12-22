@@ -79,6 +79,95 @@ from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, RslRlOnPolicyRunnerCfg, RslRl
 from isaaclab.utils import configclass
 
 
+import time
+
+
+class PhaseLoggingRunner(OnPolicyRunner):
+    """Phase 분포를 출력하는 커스텀 Runner"""
+
+    def __init__(self, env, train_cfg, log_dir=None, device="cpu"):
+        super().__init__(env, train_cfg, log_dir, device)
+        # 원본 환경 접근 (RslRlVecEnvWrapper 내부)
+        self._unwrapped_env = env.unwrapped
+        self._phase_log_interval = 50  # 50 iteration마다 출력
+
+    def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):
+        """학습 루프 - iteration마다 phase 분포 출력 (RSL-RL learn() 수정 버전)"""
+        # Randomize initial episode lengths (for exploration)
+        if init_at_random_ep_len:
+            self.env.episode_length_buf = torch.randint_like(
+                self.env.episode_length_buf, high=int(self.env.max_episode_length)
+            )
+
+        # Start learning
+        obs = self.env.get_observations().to(self.device)
+        self.train_mode()
+
+        # Ensure all parameters are in-synced
+        if self.is_distributed:
+            print(f"Synchronizing parameters for rank {self.gpu_global_rank}...")
+            self.alg.broadcast_parameters()
+
+        # Start training
+        start_it = self.current_learning_iteration
+        total_it = start_it + num_learning_iterations
+        for it in range(start_it, total_it):
+            start = time.time()
+            # Rollout
+            with torch.inference_mode():
+                for _ in range(self.cfg["num_steps_per_env"]):
+                    actions = self.alg.act(obs)
+                    obs, rewards, dones, extras = self.env.step(actions.to(self.env.device))
+                    obs, rewards, dones = (obs.to(self.device), rewards.to(self.device), dones.to(self.device))
+                    self.alg.process_env_step(obs, rewards, dones, extras)
+                    intrinsic_rewards = self.alg.intrinsic_rewards if self.alg_cfg["rnd_cfg"] else None
+                    self.logger.process_env_step(rewards, dones, extras, intrinsic_rewards)
+
+                stop = time.time()
+                collect_time = stop - start
+                start = stop
+                self.alg.compute_returns(obs)
+
+            # Update policy
+            loss_dict = self.alg.update()
+
+            stop = time.time()
+            learn_time = stop - start
+            self.current_learning_iteration = it
+
+            # Log information
+            self.logger.log(
+                it=it,
+                start_it=start_it,
+                total_it=total_it,
+                collect_time=collect_time,
+                learn_time=learn_time,
+                loss_dict=loss_dict,
+                learning_rate=self.alg.learning_rate,
+                action_std=self.alg.policy.action_std,
+                rnd_weight=self.alg.rnd.weight if self.alg_cfg["rnd_cfg"] else None,
+            )
+
+            # === Phase 분포 출력 (추가된 부분) ===
+            if it % self._phase_log_interval == 0:
+                try:
+                    phase_stats = self._unwrapped_env.get_phase_stats()
+                    print(f"  [Phase] APP:{phase_stats['approach']} ALN:{phase_stats['align']} "
+                          f"FINE:{phase_stats['fine_align']} DESC:{phase_stats['descend']} "
+                          f"GRP:{phase_stats['grasp']} LIFT:{phase_stats['lift']} "
+                          f"| Success:{phase_stats['total_success']}")
+                except Exception:
+                    pass
+
+            # Save model
+            if it % self.cfg["save_interval"] == 0:
+                self.save(os.path.join(self.logger.log_dir, f"model_{it}.pt"))
+
+        # Save the final model after training
+        if self.logger.log_dir is not None and not self.logger.disable_logs:
+            self.save(os.path.join(self.logger.log_dir, f"model_{self.current_learning_iteration}.pt"))
+
+
 # =============================================================================
 # RSL-RL 설정
 # =============================================================================
@@ -177,7 +266,7 @@ def main():
     log_dir = f"./pen_grasp_rl/logs/e0509_ik_v5_l{args.level}"
     os.makedirs(log_dir, exist_ok=True)
 
-    runner = OnPolicyRunner(
+    runner = PhaseLoggingRunner(
         env,
         agent_cfg.to_dict(),
         log_dir=log_dir,
@@ -214,12 +303,13 @@ def main():
     print("  Level 2: 펜 20° 기울기  → 중간 난이도")
     print("  Level 3: 펜 30° 기울기  → 최종 목표")
     print("=" * 70)
-    print("단계 (Phase):")
+    print("단계 (Phase) - 6단계:")
     print("  0. APPROACH: RL - 펜 축 방향에서 접근")
     print("  1. ALIGN: RL - 대략적 자세 정렬 (dot < -0.85)")
     print("  2. FINE_ALIGN: TCP - 정밀 자세 정렬 (dot → -0.98)")
     print("  3. DESCEND: TCP - 월드 Z축 하강 + 자세 유지")
-    print("  4. GRASP: TCP - 그리퍼 닫기")
+    print("  4. GRASP: TCP - 그리퍼 닫기 (Good Grasp + 30스텝)")
+    print("  5. LIFT: TCP - 펜 5cm 들어올리기 → 성공")
     print("=" * 70)
 
     runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
