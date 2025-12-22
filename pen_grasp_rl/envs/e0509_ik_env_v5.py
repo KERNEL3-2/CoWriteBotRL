@@ -1,5 +1,13 @@
 """
-E0509 IK 환경 V5 (Hybrid RL + TCP + Curriculum Learning)
+E0509 IK 환경 V5.2 (Hybrid RL + TCP + Curriculum Learning)
+
+=== V5.2 변경사항 (V5.1 대비) ===
+1. 단계 전환 조건 강화: 자세 + 위치 동시 체크
+   - ALIGN → FINE_ALIGN: dot < -0.85 AND perp_dist < 4cm
+   - FINE_ALIGN → DESCEND: dot < -0.98 AND perp_dist < 3cm
+
+=== V5.1 변경사항 (V5 대비) ===
+1. DESCEND 방향 수정: 월드 Z축 → 펜 캡 방향으로 이동
 
 === V5 변경사항 (V4 대비) ===
 1. TCP DESCEND 버그 수정: 펜 축 방향 → 월드 Z축 방향 하강
@@ -14,17 +22,17 @@ Level 2: 펜 20° 기울기               - 중간 난이도
 Level 3: 펜 30° 기울기               - 최종 목표
 
 === Hybrid 접근 방식 ===
-[RL 정책] → 대략적 접근 (조건 완화)
+[RL 정책] → 대략적 접근
               ↓
-        조건 달성? (dist < 5cm, dot < -0.85)
+        조건 달성? (perp < 4cm, dot < -0.85)
               ↓
-[TCP 제어] → 정밀 정렬 (dot → -1) + 월드 Z축 하강 + 그립
+[TCP 제어] → 정밀 정렬 (perp < 3cm, dot < -0.98) → 펜 캡 방향 하강 + 그립
 
 === 단계 (Phase) ===
 0. APPROACH: 펜 축 방향에서 접근
-1. ALIGN: 자세 정렬 (RL)
-2. FINE_ALIGN: 정밀 자세 정렬 (TCP 제어 - deterministic)
-3. DESCEND: 월드 Z축 하강 + 자세 유지 (TCP 제어)
+1. ALIGN: 자세 정렬 (RL) - 위치도 맞춰야 다음 단계
+2. FINE_ALIGN: 정밀 자세 정렬 (TCP) - 위치도 맞춰야 다음 단계
+3. DESCEND: 펜 캡 방향 하강 + 자세 유지 (TCP)
 4. GRASP: 그리퍼 닫기
 """
 from __future__ import annotations
@@ -68,11 +76,13 @@ PHASE_GRASP = 4       # TCP: 그리퍼 닫기
 # Pre-grasp 설정
 PRE_GRASP_AXIS_DIST = 0.07  # 캡에서 펜 축 방향으로 7cm
 
-# 단계 전환 조건 (V4: 완화됨!)
-APPROACH_TO_ALIGN_AXIS_DIST = 0.10      # 축 방향 거리 < 10cm (완화: 8→10)
-APPROACH_TO_ALIGN_PERP_DIST = 0.05      # 축에서 벗어난 거리 < 5cm (완화: 3→5)
-ALIGN_TO_FINE_ALIGN_DOT = -0.85         # 대략적 정렬 (완화: -0.95→-0.85)
-FINE_ALIGN_TO_DESCEND_DOT = -0.98       # 정밀 정렬 완료 (새로운 조건)
+# 단계 전환 조건 (V5.2: 위치 + 자세 동시 체크)
+APPROACH_TO_ALIGN_AXIS_DIST = 0.10      # 축 방향 거리 < 10cm
+APPROACH_TO_ALIGN_PERP_DIST = 0.05      # 축에서 벗어난 거리 < 5cm
+ALIGN_TO_FINE_ALIGN_DOT = -0.85         # 대략적 정렬
+ALIGN_TO_FINE_ALIGN_PERP_DIST = 0.04    # V5.2: 축 거리 < 4cm 추가
+FINE_ALIGN_TO_DESCEND_DOT = -0.98       # 정밀 정렬 완료
+FINE_ALIGN_TO_DESCEND_PERP_DIST = 0.03  # V5.2: 축 거리 < 3cm 추가
 DESCEND_TO_GRASP_DIST = 0.02            # 캡까지 거리 < 2cm
 
 # 성공 조건
@@ -425,20 +435,19 @@ class E0509IKEnvV5(DirectRLEnv):
             tcp_actions[fine_align_mask, 3:] = rotation_vec.squeeze(-1) if rotation_vec.dim() > 2 else rotation_vec
 
         # ============================================================
-        # DESCEND: 월드 Z축 방향 하강 + 자세 유지 (V5 수정)
+        # DESCEND: 펜 캡 방향으로 이동 + Z축 정렬 유지 (V5.1 수정)
         # ============================================================
         descend_mask = (self.phase == PHASE_DESCEND)
         if descend_mask.any():
-            num_descend = descend_mask.sum().item()
+            # V5.1 수정: 펜 캡 방향으로 이동 (월드 Z축이 아닌!)
+            # 문제: 그리퍼가 펜 캡 "위"가 아닌 "옆"에 있을 때 월드 Z축으로 내려가면 펜에 가까워지지 않음
+            # 해결: 항상 펜 캡 방향으로 이동
+            to_cap = cap_pos[descend_mask] - grasp_pos[descend_mask]
+            to_cap_dist = torch.norm(to_cap, dim=-1, keepdim=True) + 1e-6
+            to_cap_normalized = to_cap / to_cap_dist
+            tcp_actions[descend_mask, :3] = to_cap_normalized * DESCEND_SPEED
 
-            # V5 수정: 월드 Z축 방향으로 하강 (펜 축 방향 대신)
-            # 기존: descend_dir = -pen_z (펜이 기울어지면 옆으로 이동)
-            # 수정: descend_dir = [0, 0, -1] (항상 아래로)
-            descend_dir = torch.zeros(num_descend, 3, device=self.device)
-            descend_dir[:, 2] = -1.0  # 월드 Z축 아래 방향
-            tcp_actions[descend_mask, :3] = descend_dir * DESCEND_SPEED
-
-            # V5 수정: 자세 보정 강화 (DESCEND_POSE_CORRECTION_GAIN 사용)
+            # Z축 정렬 유지 (자세 보정)
             target_z = -pen_z[descend_mask]
             current_z = gripper_z[descend_mask]
             rotation_axis = torch.cross(current_z, target_z, dim=-1)
@@ -446,7 +455,7 @@ class E0509IKEnvV5(DirectRLEnv):
             rotation_axis = rotation_axis / rotation_axis_norm
             dot = torch.sum(current_z * target_z, dim=-1, keepdim=True)
             angle = torch.acos(torch.clamp(dot, -1.0, 1.0))
-            # V5: 자세 보정 속도 증가 (0.5 → DESCEND_POSE_CORRECTION_GAIN)
+            # 자세 보정 속도 (DESCEND_POSE_CORRECTION_GAIN)
             rotation_delta = torch.clamp(angle, max=FINE_ALIGN_ROTATION_SPEED * DESCEND_POSE_CORRECTION_GAIN)
             tcp_actions[descend_mask, 3:] = (rotation_axis * rotation_delta).squeeze(-1) if (rotation_axis * rotation_delta).dim() > 2 else rotation_axis * rotation_delta
 
@@ -674,16 +683,24 @@ class E0509IKEnvV5(DirectRLEnv):
             self.align_target_pos[transition_to_align] = grasp_pos[transition_to_align].clone()
             self.phase_step_count[transition_to_align] = 0
 
-        # ALIGN → FINE_ALIGN (완화된 조건)
-        transition_to_fine_align = align_mask & (dot_product < ALIGN_TO_FINE_ALIGN_DOT)
+        # ALIGN → FINE_ALIGN (V5.2: 자세 + 위치 동시 체크)
+        transition_to_fine_align = (
+            align_mask &
+            (dot_product < ALIGN_TO_FINE_ALIGN_DOT) &
+            (perpendicular_dist < ALIGN_TO_FINE_ALIGN_PERP_DIST)
+        )
         if transition_to_fine_align.any():
             self.phase[transition_to_fine_align] = PHASE_FINE_ALIGN
             rewards[transition_to_fine_align] += self.cfg.rew_scale_phase_transition
             self.fine_align_target_pos[transition_to_fine_align] = grasp_pos[transition_to_fine_align].clone()
             self.phase_step_count[transition_to_fine_align] = 0
 
-        # FINE_ALIGN → DESCEND (정밀 정렬 완료)
-        transition_to_descend = fine_align_mask & (dot_product < FINE_ALIGN_TO_DESCEND_DOT)
+        # FINE_ALIGN → DESCEND (V5.2: 자세 + 위치 동시 체크)
+        transition_to_descend = (
+            fine_align_mask &
+            (dot_product < FINE_ALIGN_TO_DESCEND_DOT) &
+            (perpendicular_dist < FINE_ALIGN_TO_DESCEND_PERP_DIST)
+        )
         if transition_to_descend.any():
             self.phase[transition_to_descend] = PHASE_DESCEND
             rewards[transition_to_descend] += self.cfg.rew_scale_phase_transition
