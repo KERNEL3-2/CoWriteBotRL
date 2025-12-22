@@ -338,6 +338,10 @@ class E0509IKEnvV5(DirectRLEnv):
         # 성공 카운터
         self.success_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
 
+        # Phase 출력용 global step 카운터
+        self._global_step = 0
+        self._phase_print_interval = 5000  # 5000 step마다 출력 (약 50 iter)
+
     def _setup_scene(self):
         """씬 구성"""
         self.robot = Articulation(self.cfg.robot_cfg)
@@ -830,6 +834,18 @@ class E0509IKEnvV5(DirectRLEnv):
         # =========================================================
         self.prev_axis_distance = torch.abs(axis_distance + PRE_GRASP_AXIS_DIST)
         self.prev_distance_to_cap[descend_mask] = distance_to_cap[descend_mask]
+
+        # =========================================================
+        # Phase 분포 출력 (N step마다)
+        # =========================================================
+        self._global_step += 1
+        if self._global_step % self._phase_print_interval == 0:
+            phase_stats = self.get_phase_stats()
+            print(f"  [Step {self._global_step}] Phase: "
+                  f"APP:{phase_stats['approach']} ALN:{phase_stats['align']} "
+                  f"FINE:{phase_stats['fine_align']} DESC:{phase_stats['descend']} "
+                  f"GRP:{phase_stats['grasp']} LIFT:{phase_stats['lift']} "
+                  f"| Success:{phase_stats['total_success']}")
 
         return rewards
 
