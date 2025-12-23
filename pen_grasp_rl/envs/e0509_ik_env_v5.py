@@ -684,32 +684,47 @@ class E0509IKEnvV5(DirectRLEnv):
             progress = self.prev_axis_distance[approach_mask] - torch.abs(axis_distance[approach_mask] + PRE_GRASP_AXIS_DIST)
             rewards[approach_mask] += self.cfg.rew_scale_approach_progress * torch.clamp(progress, min=0)
 
-            # V5.3 추가: 자세 정렬 reward (ALIGN과 동일)
+            # V5.5 수정: 자세 정렬 reward (위치 조건부 + exponential)
+            # 거리가 가까울수록 자세 reward 가중치가 exponential하게 증가
             approach_align_quality = (-dot_product[approach_mask] - 0.5) / 0.5
-            rewards[approach_mask] += self.cfg.rew_scale_align_orientation * 0.5 * torch.clamp(approach_align_quality, min=0)
+
+            # 기준 거리 10cm, 가까울수록 가중치 증가
+            base_dist = 0.1
+            scale = 20.0
+            position_weight = torch.exp((base_dist - perpendicular_dist[approach_mask]) * scale)
+            position_weight = torch.clamp(position_weight, min=0, max=5.0)
+
+            rewards[approach_mask] += self.cfg.rew_scale_align_orientation * 0.5 * torch.clamp(approach_align_quality, min=0) * position_weight
 
         # =========================================================
-        # ALIGN 단계 (RL) - V5.3: 위치 + 자세 동시 reward
+        # ALIGN 단계 (RL) - V5.5: 위치 조건부 자세 reward
         # =========================================================
         align_mask = (self.phase == PHASE_ALIGN)
         if align_mask.any():
-            # V5.3 수정: position_hold 대신 perp_dist reward (펜 축으로 이동 유도)
+            # 위치 reward (펜 축으로 이동 유도)
             rewards[align_mask] += self.cfg.rew_scale_perp_dist * perpendicular_dist[align_mask]
 
-            # 자세 정렬 reward (기존)
+            # V5.5 수정: 자세 정렬 reward (위치 조건부 + exponential)
             align_quality = (-dot_product[align_mask] - 0.5) / 0.5
-            rewards[align_mask] += self.cfg.rew_scale_align_orientation * torch.clamp(align_quality, min=0)
 
-            # 정밀 정렬 보너스 (기존)
+            # 거리가 가까울수록 자세 reward 가중치가 exponential하게 증가
+            base_dist = 0.05  # ALIGN은 이미 가까우므로 기준 5cm
+            scale = 30.0
+            position_weight = torch.exp((base_dist - perpendicular_dist[align_mask]) * scale)
+            position_weight = torch.clamp(position_weight, min=0, max=5.0)
+
+            rewards[align_mask] += self.cfg.rew_scale_align_orientation * torch.clamp(align_quality, min=0) * position_weight
+
+            # 정밀 정렬 보너스 (위치 조건부)
             align_value = -dot_product[align_mask]
             exponential_bonus = torch.where(
                 align_value > self.cfg.exponential_align_threshold,
                 torch.exp((align_value - self.cfg.exponential_align_threshold) * self.cfg.exponential_align_scale),
                 torch.ones_like(align_value)
             )
-            rewards[align_mask] += self.cfg.rew_scale_exponential_align * exponential_bonus
+            rewards[align_mask] += self.cfg.rew_scale_exponential_align * exponential_bonus * position_weight
 
-            # V5.3 추가: 펜 축에 가까워지면 보너스
+            # 펜 축에 가까워지면 보너스
             on_axis_align = perpendicular_dist[align_mask] < 0.04
             rewards[align_mask] += self.cfg.rew_scale_on_axis_bonus * on_axis_align.float()
 
@@ -845,7 +860,7 @@ class E0509IKEnvV5(DirectRLEnv):
                   f"APP:{phase_stats['approach']} ALN:{phase_stats['align']} "
                   f"FINE:{phase_stats['fine_align']} DESC:{phase_stats['descend']} "
                   f"GRP:{phase_stats['grasp']} LIFT:{phase_stats['lift']} "
-                  f"| Success:{phase_stats['total_success']}")
+                  f"| Success:{phase_stats['total_success']}", flush=True)
 
         return rewards
 

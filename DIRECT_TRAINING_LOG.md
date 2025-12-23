@@ -1373,4 +1373,93 @@ python pen_grasp_rl/scripts/play_ik_v5.py --checkpoint /path/to/model.pt --level
 | 2024-12-22 | **IK V5.2 학습**: Mean Reward 2,553 (+114%), Play에서 앞으로 드러눕는 문제 발견 | - |
 | 2024-12-22 | **IK V5.3**: End-to-End 스타일 reward (모든 단계에서 위치+자세 동시) | - |
 | 2024-12-22 | **IK V5.3 Play 테스트**: success=106 달성! 그리퍼 닫기/LIFT 문제 발견 | - |
-| 2024-12-22 | **IK V5.4**: PHASE_LIFT 추가 + Good Grasp 조건 + 그리퍼 1.1 | (현재) |
+| 2024-12-22 | **IK V5.4**: PHASE_LIFT 추가 + Good Grasp 조건 + 그리퍼 1.1 | `2495832` |
+| 2024-12-23 | **IK V5.4 학습 (30K)**: Reward Hacking 발견 - 로봇 뒤집어짐 | - |
+| 2024-12-23 | **IK V5.5**: 위치 조건부 자세 reward (exponential) | (현재) |
+
+---
+
+## IK V5.4 학습 결과 (30K iterations) - Reward Hacking 발견
+
+**학습 환경**:
+- Level 0 (펜 수직)
+- 30,000 iterations
+- Fixed LR
+
+**학습 그래프**:
+
+![IK V5 30K 학습](images/e0509_ik_v5_30k.png)
+
+**수치 결과**:
+
+| 항목 | 시작 | 최종 | 비고 |
+|------|------|------|------|
+| Mean Reward | -112 | 2,713 | 최대 2,785 |
+| Episode Length | 141 | 449 | **max length 도달 (timeout)** |
+| Learning Rate | 0.000256 | 0.0001 | Fixed LR decay |
+
+**Play 테스트 결과 (model_29999.pt)**:
+
+![IK V5 30K Play 테스트](images/e0509_ik_v5_30k_play.png)
+
+```
+최종 단계 분포:
+  APPROACH=2, ALIGN=12, FINE_ALIGN=2
+  DESCEND=0, GRASP=0, LIFT=0
+총 성공 횟수: 0
+```
+
+**문제 발견: Reward Hacking**
+
+로봇이 뒤집어지거나 똬리를 틀면서 펜에 접근하지 않음:
+- `perp_dist`: 0.04~0.12m (필요: < 0.008m) → 10배 이상 멀리
+- `dot`: -0.01 ~ -0.46 (필요: < -0.98) → 자세 정렬 안됨
+- DESCEND, GRASP, LIFT 진입: **0회**
+- Episode Length 449 (timeout) → **성공 종료가 아닌 시간 초과**
+
+**원인 분석**:
+
+V5.3에서 APPROACH 단계에 자세 reward를 **독립적으로** 추가한 것이 문제:
+
+```python
+# V5.3/V5.4 APPROACH (문제)
+rewards += rew_scale_perp_dist * perpendicular_dist      # -5.0 * 0.1 = -0.5
+rewards += rew_scale_axis_dist * axis_dist               # -2.0 * 0.4 = -0.8
+rewards += rew_scale_align_orientation * 0.5 * align_quality  # +3.0 * 0.5 * 1.0 = +1.5
+# 합계: -0.5 - 0.8 + 1.5 = +0.2 (양수!)
+```
+
+**위치가 멀어도 자세만 맞추면 양수 reward** → 로봇이 멀리서 자세만 바꿈 → IK가 이상한 해 → 로봇 뒤집어짐
+
+---
+
+## IK V5.5 수정 - 위치 조건부 자세 Reward
+
+**핵심 변경**: 자세 reward에 위치 조건부 가중치 (exponential) 적용
+
+```python
+# V5.5 APPROACH (수정)
+# 거리가 가까울수록 자세 reward 가중치가 exponential하게 증가
+base_dist = 0.1  # 기준 거리 10cm
+scale = 20.0
+position_weight = torch.exp((base_dist - perpendicular_dist) * scale)
+position_weight = torch.clamp(position_weight, min=0, max=5.0)
+
+rewards += rew_scale_align_orientation * 0.5 * align_quality * position_weight
+```
+
+**position_weight 효과**:
+
+| perpendicular_dist | APPROACH weight | ALIGN weight |
+|-------------------|-----------------|--------------|
+| 0cm | 5.0 (max) | 5.0 (max) |
+| 5cm | 2.7 | 1.0 |
+| 10cm | 1.0 | 0.0 |
+| 15cm | 0.4 | 0.0 |
+
+**기대 효과**:
+- 멀리서 자세만 바꿔도 reward 받는 문제 해결
+- 위치가 가까워질수록 자세 reward 급격히 증가
+- 로봇이 먼저 펜에 접근 → 그 다음 자세 정렬
+
+**다음 단계**: V5.5로 재학습 후 Play 테스트
