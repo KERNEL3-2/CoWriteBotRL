@@ -735,35 +735,59 @@ class E0509IKEnvV5(DirectRLEnv):
             rewards[align_mask] += self.cfg.rew_scale_on_axis_bonus * on_axis_align.float()
 
         # =========================================================
-        # FINE_ALIGN 단계 (TCP) - 고정 보상
+        # FINE_ALIGN 단계 (TCP) - 정렬 보상 + exponential
         # =========================================================
         fine_align_mask = (self.phase == PHASE_FINE_ALIGN)
         if fine_align_mask.any():
-            # 정렬 개선에 따른 보상
+            # 정렬 개선에 따른 보상 (선형)
             align_progress = -dot_product[fine_align_mask]  # 클수록 좋음 (최대 1)
             rewards[fine_align_mask] += self.cfg.rew_scale_fine_align * align_progress
 
+            # 정밀 정렬 exponential 보너스 (dot > -0.95부터)
+            fine_exponential = torch.where(
+                align_progress > 0.95,
+                torch.exp((align_progress - 0.95) * 30.0),  # 0.95→1, 0.99→3.3, 1.0→4.5
+                torch.ones_like(align_progress)
+            )
+            rewards[fine_align_mask] += 2.0 * fine_exponential
+
         # =========================================================
-        # DESCEND 단계 (TCP) - 이전 phase 보상 유지 + 하강 보상
+        # DESCEND 단계 (TCP) - 이전 phase 보상 유지 + 하강 보상 + exponential
         # =========================================================
         descend_mask = (self.phase == PHASE_DESCEND)
         if descend_mask.any():
-            # 이전 phase(FINE_ALIGN) 보상 유지: 정렬 유지
+            # 이전 phase(FINE_ALIGN) 보상 유지: 정렬 유지 (선형)
             align_progress = -dot_product[descend_mask]
             rewards[descend_mask] += self.cfg.rew_scale_fine_align * align_progress
+
+            # 정밀 정렬 exponential 보너스 (dot > -0.95부터)
+            fine_exponential = torch.where(
+                align_progress > 0.95,
+                torch.exp((align_progress - 0.95) * 30.0),
+                torch.ones_like(align_progress)
+            )
+            rewards[descend_mask] += 2.0 * fine_exponential
 
             # 추가: 하강 진행에 따른 보상
             descend_progress = self.prev_distance_to_cap[descend_mask] - distance_to_cap[descend_mask]
             rewards[descend_mask] += self.cfg.rew_scale_descend * torch.clamp(descend_progress * 100, min=0, max=1)
 
         # =========================================================
-        # GRASP 단계 (TCP) - 이전 phase 보상 유지 + 그립 보상
+        # GRASP 단계 (TCP) - 이전 phase 보상 유지 + 그립 보상 + exponential
         # =========================================================
         grasp_mask = (self.phase == PHASE_GRASP)
         if grasp_mask.any():
-            # 이전 phase 보상 유지: 정렬 유지
+            # 이전 phase 보상 유지: 정렬 유지 (선형)
             align_progress = -dot_product[grasp_mask]
             rewards[grasp_mask] += self.cfg.rew_scale_fine_align * align_progress
+
+            # 정밀 정렬 exponential 보너스 (dot > -0.95부터)
+            fine_exponential = torch.where(
+                align_progress > 0.95,
+                torch.exp((align_progress - 0.95) * 30.0),
+                torch.ones_like(align_progress)
+            )
+            rewards[grasp_mask] += 2.0 * fine_exponential
 
             # 추가: 그립 보상
             gripper_pos = self.robot.data.joint_pos[:, self._gripper_joint_ids]
