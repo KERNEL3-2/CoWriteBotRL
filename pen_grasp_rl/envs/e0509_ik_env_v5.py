@@ -261,7 +261,6 @@ class E0509IKEnvV5Cfg(DirectRLEnvCfg):
     # 페널티
     rew_scale_collision = -5.0
     rew_scale_wrong_side = 0.0
-    rew_scale_phase_stagnation = -0.01  # V5.6: 체류 패널티 추가
 
 
 class E0509IKEnvV5(DirectRLEnv):
@@ -703,11 +702,8 @@ class E0509IKEnvV5(DirectRLEnv):
 
             rewards[approach_mask] += self.cfg.rew_scale_align_orientation * 0.5 * torch.clamp(approach_align_quality, min=0) * position_weight
 
-            # V5.6: Phase 체류 패널티 (오래 머물수록 페널티 증가)
-            rewards[approach_mask] += self.cfg.rew_scale_phase_stagnation * self.phase_step_count[approach_mask].float()
-
         # =========================================================
-        # ALIGN 단계 (RL) - V5.6: 보상 균등화 + 체류 패널티
+        # ALIGN 단계 (RL) - V5.6: 보상 균등화
         # =========================================================
         align_mask = (self.phase == PHASE_ALIGN)
         if align_mask.any():
@@ -737,9 +733,6 @@ class E0509IKEnvV5(DirectRLEnv):
             # 펜 축에 가까워지면 보너스
             on_axis_align = perpendicular_dist[align_mask] < 0.04
             rewards[align_mask] += self.cfg.rew_scale_on_axis_bonus * on_axis_align.float()
-
-            # V5.6: Phase 체류 패널티 (오래 머물수록 페널티 증가)
-            rewards[align_mask] += self.cfg.rew_scale_phase_stagnation * self.phase_step_count[align_mask].float()
 
         # =========================================================
         # FINE_ALIGN 단계 (TCP) - 고정 보상
