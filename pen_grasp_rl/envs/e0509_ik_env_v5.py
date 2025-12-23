@@ -864,11 +864,27 @@ class E0509IKEnvV5(DirectRLEnv):
         self.prev_distance_to_cap[descend_mask] = distance_to_cap[descend_mask]
 
         # =========================================================
-        # Phase 분포 출력 (N step마다)
+        # Phase 분포 출력 (N step마다) + TensorBoard 기록
         # =========================================================
         self._global_step += 1
+
+        # TensorBoard 기록 (매 step)
+        phase_stats = self.get_phase_stats()
+        if "log" not in self.extras:
+            self.extras["log"] = {}
+
+        # Phase 분포를 비율로 기록 (0~1)
+        total_envs = float(self.num_envs)
+        self.extras["log"]["Phase/approach_ratio"] = phase_stats['approach'] / total_envs
+        self.extras["log"]["Phase/align_ratio"] = phase_stats['align'] / total_envs
+        self.extras["log"]["Phase/fine_align_ratio"] = phase_stats['fine_align'] / total_envs
+        self.extras["log"]["Phase/descend_ratio"] = phase_stats['descend'] / total_envs
+        self.extras["log"]["Phase/grasp_ratio"] = phase_stats['grasp'] / total_envs
+        self.extras["log"]["Phase/lift_ratio"] = phase_stats['lift'] / total_envs
+        self.extras["log"]["Phase/total_success"] = float(phase_stats['total_success'])
+
+        # 콘솔 출력 (N step마다)
         if self._global_step % self._phase_print_interval == 0:
-            phase_stats = self.get_phase_stats()
             print(f"  [Step {self._global_step}] Phase: "
                   f"APP:{phase_stats['approach']} ALN:{phase_stats['align']} "
                   f"FINE:{phase_stats['fine_align']} DESC:{phase_stats['descend']} "
