@@ -1462,4 +1462,126 @@ rewards += rew_scale_align_orientation * 0.5 * align_quality * position_weight
 - 위치가 가까워질수록 자세 reward 급격히 증가
 - 로봇이 먼저 펜에 접근 → 그 다음 자세 정렬
 
-**다음 단계**: V5.5로 재학습 후 Play 테스트
+---
+
+### IK V5.5 학습 결과 (4K iterations)
+
+**날짜**: 2024-12-23
+
+**학습 결과**:
+
+| 구간 | Mean Reward | VF Loss | Episode Length | 해석 |
+|------|-------------|---------|----------------|------|
+| 0-1K | avg=827 | avg=458 | 22→449 | 초기 학습, FINE_ALIGN 진입 시작 |
+| 1K-2K | avg=3884 | avg=61 | 449 | **안정적**, 많은 env가 후반 phase 진입 |
+| 2K-3K | avg=2601 (**↓**) | avg=1208 (**↑**) | 449 | **퇴화 구간!** VF Loss 지속적으로 높음 |
+| 3K-4K | avg=3953 | avg=13 | 449 | 안정화됐지만 APPROACH에 갇힌 상태 |
+
+**학습 그래프**:
+
+![IK V5.5 4K Training](images/e0509_ik_v5.5_4k_training.png)
+
+**Phase 분포 변화** (학습 중 확인):
+- ~1500 iter: `APP:7037, ALN:235, FINE:920` → FINE_ALIGN 진입 성공!
+- ~4000 iter: `APP:8192` → **모든 env가 APPROACH로 퇴화**
+
+**문제 발견: 다른 형태의 Reward Hacking**
+
+**원인 분석**:
+1. `position_weight` max=5.0이 너무 높음
+2. ALIGN에서 orientation reward가 최대 **15.0/step** (3.0 × 5.0)
+3. 이 높은 reward 때문에 다음 phase로 전환하기보다 ALIGN에 머무르는 것이 유리
+4. 불안정한 학습 → 전체가 APPROACH로 퇴화
+
+**VF Loss Spike 분석**:
+```
+- step 894:  3648  (FINE_ALIGN 첫 진입)
+- step 1993: 6652  (더 많은 env가 후반 phase 진입)
+- step 2533: 7836  (최대 spike → 직후 퇴화 시작)
+```
+
+**퇴화 과정**:
+1. 1K~2K: 많은 env가 FINE_ALIGN까지 진입
+2. 2K~2.5K: ALIGN/FINE_ALIGN에서 높은 orientation reward로 머무름
+3. 2.5K: VF Loss 폭발 (7836) → policy 불안정
+4. 3K~4K: 모든 env가 APPROACH로 회귀, 안정화
+
+**수정 필요 사항**:
+
+1. **position_weight max 축소**: 5.0 → 2.0
+2. **또는** 다음 phase 진입 보너스 증가
+3. **또는** 이전 phase 체류 시간에 따른 패널티
+
+---
+
+## IK V5.6 - 점진적 보상 증가 + 3가지 수정
+
+**날짜**: 2024-12-23
+
+**V5.5 문제점**: position_weight max=5.0이 너무 높아 ALIGN에서 ~27/step → 다음 phase 전환보다 머무르는 게 유리
+
+### 설계 원칙: 점진적 보상 증가
+
+| 단계 | 목표 보상/step | 이유 |
+|------|---------------|------|
+| APPROACH | 3-4 | 탐색 단계, 낮게 시작 |
+| ALIGN | 4-5 | 자세 정렬 시작 |
+| FINE_ALIGN | 5-6 | 정밀 정렬 |
+| DESCEND | 6-7 | 하강 진행 |
+| GRASP | 8-10 | 성공에 가까울수록 높음 |
+
+**원리**: Value function이 "앞으로 더 큰 보상이 온다"는 것을 학습 → 목표 지향적 policy
+
+### 변경 사항
+
+**1. 보상 스케일 조정 (점진적 증가)**:
+```python
+# APPROACH (3-4/step)
+rew_scale_approach_progress = 3.0   # 10.0 → 3.0
+rew_scale_on_axis_bonus = 1.5       # 2.0 → 1.5
+
+# ALIGN (4-5/step)
+rew_scale_align_orientation = 2.0   # 3.0 → 2.0
+rew_scale_exponential_align = 0.3   # 0.5 → 0.3
+
+# FINE_ALIGN (5-6/step)
+rew_scale_fine_align = 6.0          # 2.0 → 6.0
+
+# DESCEND (6-7/step)
+rew_scale_descend = 7.0             # 3.0 → 7.0
+
+# GRASP (8-10/step)
+rew_scale_grasp_close = 4.0         # 5.0 → 4.0
+rew_scale_grasp_hold = 6.0          # 10.0 → 6.0
+```
+
+**2. position_weight max 축소**:
+```python
+position_weight = torch.clamp(position_weight, min=0, max=2.0)  # 5.0 → 2.0
+```
+- APPROACH 자세 reward 최대: 2.0 × 0.5 × 2.0 = 2.0/step
+- ALIGN 자세 reward 최대: 2.0 × 1.0 × 2.0 = 4.0/step
+
+**3. Phase 전환 보상 증가**:
+```python
+rew_scale_phase_transition = 50.0   # 15.0 → 50.0
+```
+- 전환 보상 = 현재 phase ~10 step과 동등 → 강력한 유인
+
+**4. Phase 체류 패널티 추가**:
+```python
+rew_scale_phase_stagnation = -0.01  # 신규
+# 100 step 머무르면 -1.0 패널티
+rewards += rew_scale_phase_stagnation * phase_step_count
+```
+
+### 예상 효과
+
+| 문제 | V5.5 | V5.6 |
+|------|------|------|
+| ALIGN reward 폭발 | 최대 27/step | 최대 ~6/step |
+| 전환 유인 | 15.0 (ALIGN 1 step 미만) | 50.0 (ALIGN ~10 step) |
+| 체류 패널티 | 없음 | -0.01/step |
+| 다음 phase 가치 | 불명확 | 점진적으로 증가 |
+
+**다음 단계**: V5.6 학습 후 결과 확인

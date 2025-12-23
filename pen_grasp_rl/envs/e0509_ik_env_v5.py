@@ -225,36 +225,43 @@ class E0509IKEnvV5Cfg(DirectRLEnvCfg):
     ee_offset_pos = [0.0, 0.0, 0.15]
 
     # ==========================================================================
-    # 보상 스케일 (V4)
+    # 보상 스케일 (V5.6 - 점진적 증가)
     # ==========================================================================
+    # 목표: 다음 phase로 갈수록 보상 증가 → 방향성 명확
+    # APPROACH(3-4) < ALIGN(4-5) < FINE_ALIGN(5-6) < DESCEND(6-7) < GRASP(8-10)
 
-    # APPROACH 단계
+    # APPROACH 단계 (목표 ~3-4/step)
     rew_scale_axis_dist = -2.0
     rew_scale_perp_dist = -5.0
-    rew_scale_approach_progress = 10.0
-    rew_scale_on_axis_bonus = 2.0
+    rew_scale_approach_progress = 3.0   # V5.6: 10.0 → 3.0
+    rew_scale_on_axis_bonus = 1.5       # V5.6: 2.0 → 1.5
 
-    # ALIGN 단계
+    # ALIGN 단계 (목표 ~4-5/step)
     rew_scale_align_position_hold = -3.0
-    rew_scale_align_orientation = 3.0
-    rew_scale_exponential_align = 0.5
-    exponential_align_threshold = 0.80  # V4: 0.85 → 0.80 (더 쉽게)
+    rew_scale_align_orientation = 2.0   # V5.6: 3.0 → 2.0
+    rew_scale_exponential_align = 0.3   # V5.6: 0.5 → 0.3
+    exponential_align_threshold = 0.80
     exponential_align_scale = 10.0
 
-    # FINE_ALIGN, DESCEND, GRASP (TCP 제어 - 고정 보상)
-    rew_scale_fine_align = 2.0     # 정밀 정렬 중 보상
-    rew_scale_descend = 3.0        # 하강 중 보상
-    rew_scale_grasp_close = 5.0
-    rew_scale_grasp_hold = 10.0
+    # FINE_ALIGN (목표 ~5-6/step)
+    rew_scale_fine_align = 6.0     # V5.6: 2.0 → 6.0
+
+    # DESCEND (목표 ~6-7/step)
+    rew_scale_descend = 7.0        # V5.6: 3.0 → 7.0
+
+    # GRASP (목표 ~8-10/step)
+    rew_scale_grasp_close = 4.0    # V5.6: 5.0 → 4.0
+    rew_scale_grasp_hold = 6.0     # V5.6: 10.0 → 6.0 (합계 ~10)
 
     # 공통
     rew_scale_success = 100.0
-    rew_scale_phase_transition = 15.0
+    rew_scale_phase_transition = 50.0   # V5.6: 15.0 → 50.0 (크게 높임)
     rew_scale_action = -0.005
 
     # 페널티
     rew_scale_collision = -5.0
-    rew_scale_wrong_side = 0.0  # 비활성화
+    rew_scale_wrong_side = 0.0
+    rew_scale_phase_stagnation = -0.01  # V5.6: 체류 패널티 추가
 
 
 class E0509IKEnvV5(DirectRLEnv):
@@ -684,34 +691,37 @@ class E0509IKEnvV5(DirectRLEnv):
             progress = self.prev_axis_distance[approach_mask] - torch.abs(axis_distance[approach_mask] + PRE_GRASP_AXIS_DIST)
             rewards[approach_mask] += self.cfg.rew_scale_approach_progress * torch.clamp(progress, min=0)
 
-            # V5.5 수정: 자세 정렬 reward (위치 조건부 + exponential)
+            # V5.6 수정: 자세 정렬 reward (위치 조건부 + exponential + 낮은 가중치)
             # 거리가 가까울수록 자세 reward 가중치가 exponential하게 증가
             approach_align_quality = (-dot_product[approach_mask] - 0.5) / 0.5
 
-            # 기준 거리 10cm, 가까울수록 가중치 증가
+            # 기준 거리 10cm, 가까울수록 가중치 증가 (max 2.0으로 제한)
             base_dist = 0.1
             scale = 20.0
             position_weight = torch.exp((base_dist - perpendicular_dist[approach_mask]) * scale)
-            position_weight = torch.clamp(position_weight, min=0, max=5.0)
+            position_weight = torch.clamp(position_weight, min=0, max=2.0)  # V5.6: 5.0 → 2.0
 
             rewards[approach_mask] += self.cfg.rew_scale_align_orientation * 0.5 * torch.clamp(approach_align_quality, min=0) * position_weight
 
+            # V5.6: Phase 체류 패널티 (오래 머물수록 페널티 증가)
+            rewards[approach_mask] += self.cfg.rew_scale_phase_stagnation * self.phase_step_count[approach_mask].float()
+
         # =========================================================
-        # ALIGN 단계 (RL) - V5.5: 위치 조건부 자세 reward
+        # ALIGN 단계 (RL) - V5.6: 보상 균등화 + 체류 패널티
         # =========================================================
         align_mask = (self.phase == PHASE_ALIGN)
         if align_mask.any():
             # 위치 reward (펜 축으로 이동 유도)
             rewards[align_mask] += self.cfg.rew_scale_perp_dist * perpendicular_dist[align_mask]
 
-            # V5.5 수정: 자세 정렬 reward (위치 조건부 + exponential)
+            # V5.6 수정: 자세 정렬 reward (위치 조건부 + exponential + 낮은 가중치)
             align_quality = (-dot_product[align_mask] - 0.5) / 0.5
 
-            # 거리가 가까울수록 자세 reward 가중치가 exponential하게 증가
+            # 거리가 가까울수록 자세 reward 가중치가 exponential하게 증가 (max 2.0)
             base_dist = 0.05  # ALIGN은 이미 가까우므로 기준 5cm
             scale = 30.0
             position_weight = torch.exp((base_dist - perpendicular_dist[align_mask]) * scale)
-            position_weight = torch.clamp(position_weight, min=0, max=5.0)
+            position_weight = torch.clamp(position_weight, min=0, max=2.0)  # V5.6: 5.0 → 2.0
 
             rewards[align_mask] += self.cfg.rew_scale_align_orientation * torch.clamp(align_quality, min=0) * position_weight
 
@@ -727,6 +737,9 @@ class E0509IKEnvV5(DirectRLEnv):
             # 펜 축에 가까워지면 보너스
             on_axis_align = perpendicular_dist[align_mask] < 0.04
             rewards[align_mask] += self.cfg.rew_scale_on_axis_bonus * on_axis_align.float()
+
+            # V5.6: Phase 체류 패널티 (오래 머물수록 페널티 증가)
+            rewards[align_mask] += self.cfg.rew_scale_phase_stagnation * self.phase_step_count[align_mask].float()
 
         # =========================================================
         # FINE_ALIGN 단계 (TCP) - 고정 보상
