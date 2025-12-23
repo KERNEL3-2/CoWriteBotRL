@@ -194,23 +194,25 @@ class E0509IKEnvV6Cfg(DirectRLEnvCfg):
     ee_offset_pos = [0.0, 0.0, 0.15]
 
     # ==========================================================================
-    # 보상 스케일 (V6 - 2단계, 위치만)
+    # 보상 스케일 (V6.2 - 보상 안정화 + 지수 보상)
     # ==========================================================================
-    # V6: 자세 보상 제거, 위치 보상만 사용
+    # V6.2 변경: 보상 스파이크 축소, 지수 보상 추가
 
     # APPROACH 단계 - 펜 캡으로 접근
-    rew_scale_dist_to_cap = -10.0      # 캡까지 거리 페널티
-    rew_scale_perp_dist = -5.0         # 펜 축에서 벗어난 거리 페널티
-    rew_scale_approach_progress = 5.0  # 접근 진행 보상
+    rew_scale_dist_to_cap = -15.0      # 캡까지 거리 페널티 (선형, -10→-15)
+    rew_scale_dist_exp = 10.0          # 캡까지 거리 보상 (지수, 신규!)
+    rew_scale_perp_dist = -8.0         # 펜 축 거리 페널티 (-5→-8)
+    rew_scale_perp_exp = 5.0           # 펜 축 거리 보상 (지수, 신규!)
+    rew_scale_approach_progress = 3.0  # 접근 진행 보상 (5→3)
 
-    # GRASP 단계 (V6.1: 보상 강화)
-    rew_scale_grasp_close = 10.0       # 그리퍼 닫기 보상 (5→10)
-    rew_scale_grasp_hold = 20.0        # 위치 유지 보상 (10→20)
+    # GRASP 단계
+    rew_scale_grasp_close = 5.0        # 그리퍼 닫기 보상 (10→5)
+    rew_scale_grasp_hold = 10.0        # 위치 유지 보상 (20→10)
 
-    # 공통
-    rew_scale_success = 200.0          # V6: 성공 보상
-    rew_scale_phase_transition = 100.0 # 전환 보상 (50→100)
-    rew_scale_action = -0.01           # V6: 액션 페널티 약간 증가
+    # 공통 (스파이크 축소!)
+    rew_scale_success = 50.0           # 성공 보상 (200→50)
+    rew_scale_phase_transition = 30.0  # 전환 보상 (100→30)
+    rew_scale_action = -0.01           # 액션 페널티
 
     # 페널티
     rew_scale_collision = -10.0
@@ -551,23 +553,21 @@ class E0509IKEnvV6(DirectRLEnv):
         self.phase_step_count += 1
 
         # =========================================================
-        # APPROACH 단계 - 펜 캡으로 접근 (자세는 자동!)
+        # APPROACH 단계 - 펜 캡으로 접근 (V6.2: 지수 보상 추가)
         # =========================================================
         approach_mask = (self.phase == PHASE_APPROACH)
         if approach_mask.any():
-            # 캡까지 거리 페널티
+            # 캡까지 거리 - 선형 페널티 + 지수 보상
             rewards[approach_mask] += self.cfg.rew_scale_dist_to_cap * distance_to_cap[approach_mask]
+            rewards[approach_mask] += self.cfg.rew_scale_dist_exp * torch.exp(-distance_to_cap[approach_mask] * 15.0)
 
-            # 펜 축에서 벗어난 거리 페널티
+            # 펜 축 거리 - 선형 페널티 + 지수 보상
             rewards[approach_mask] += self.cfg.rew_scale_perp_dist * perpendicular_dist[approach_mask]
+            rewards[approach_mask] += self.cfg.rew_scale_perp_exp * torch.exp(-perpendicular_dist[approach_mask] * 50.0)
 
             # 접근 진행 보상 (이전보다 가까워지면 보상)
             progress = self.prev_distance_to_cap[approach_mask] - distance_to_cap[approach_mask]
             rewards[approach_mask] += self.cfg.rew_scale_approach_progress * torch.clamp(progress * 50, min=0, max=1)
-
-            # 펜 축 근처 보너스 (perp_dist < 3cm)
-            near_axis = perpendicular_dist[approach_mask] < 0.03
-            rewards[approach_mask] += 2.0 * near_axis.float()
 
         # =========================================================
         # GRASP 단계 - 그리퍼 닫기 + 위치 유지

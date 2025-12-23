@@ -2089,5 +2089,64 @@ source ~/isaacsim_env/bin/activate
 python pen_grasp_rl/scripts/train_v6.py --headless --num_envs 4096 --level 0
 ```
 
-**다음 단계**: V6.1 학습 진행 후 GRASP 전환 정확도 확인
+---
+
+### V6.2 수정 (2024-12-23)
+
+**V6.1 학습 문제점**:
+1. **거리 수렴 느림**: dist_to_cap이 0.06m까지 줄어드는 데 오래 걸림
+2. **Value Function 발산**: Fixed LR에서도 Value Loss 급등 발생
+3. **보상 스파이크**: phase_transition(100), success(200)가 너무 커서 Value 예측 어려움
+
+**원인 분석**:
+```
+평소 보상: -2 ~ +5 (선형 페널티 + 진행 보상)
+전환 시:   +100 💥 (갑자기 큰 보상)
+성공 시:   +200 💥
+
+→ Value Function이 큰 보상 예측 어려움 → 발산
+```
+
+**V6.2 핵심 변경**:
+
+**1. 지수 보상 추가 (APPROACH)**:
+```python
+# dist_to_cap: 선형 + 지수
+rewards += -15.0 * dist_to_cap                    # 선형 페널티
+rewards += 10.0 * torch.exp(-dist_to_cap * 15.0)  # 지수 보상 (신규!)
+
+# perp_dist: 선형 + 지수
+rewards += -8.0 * perp_dist                       # 선형 페널티
+rewards += 5.0 * torch.exp(-perp_dist * 50.0)     # 지수 보상 (신규!)
+```
+
+**2. 보상 스파이크 축소**:
+| 항목 | V6.1 | V6.2 | 변경 |
+|------|------|------|------|
+| phase_transition | 100 | **30** | -70% |
+| success | 200 | **50** | -75% |
+| grasp_close | 10 | **5** | -50% |
+| grasp_hold | 20 | **10** | -50% |
+
+**3. 거리 보상 계산 예시**:
+| dist_to_cap | 선형 (-15×d) | 지수 (+10×exp) | 합계 |
+|-------------|-------------|----------------|------|
+| 0.20m | -3.0 | +0.5 | -2.5 |
+| 0.10m | -1.5 | +2.2 | +0.7 |
+| 0.05m | -0.75 | +4.7 | **+4.0** |
+| 0.02m | -0.3 | +7.4 | **+7.1** |
+
+**V6.2 기대 효과**:
+1. **빠른 거리 수렴**: 지수 보상으로 가까워질수록 급격한 보상 증가
+2. **Value Function 안정화**: 보상 스파이크 축소로 예측 용이
+3. **균형 잡힌 학습**: 스텝별 보상과 이벤트 보상 간 격차 축소
+
+**학습 명령어**:
+```bash
+cd ~/IsaacLab
+source ~/isaacsim_env/bin/activate
+python pen_grasp_rl/scripts/train_v6.py --headless --num_envs 4096 --level 0 --fixed_lr
+```
+
+**다음 단계**: V6.2 학습 후 거리 수렴 속도 및 안정성 확인
 
