@@ -1339,11 +1339,16 @@ python pen_grasp_rl/scripts/play_ik_v5.py --checkpoint /path/to/model.pt --level
 22. [x] **IK V5.3 수정** - End-to-End 스타일 reward (모든 단계에서 위치+자세 동시)
 23. [x] **IK V5.3 Play 테스트** - success=106 달성! 그리퍼 닫기/LIFT 문제 발견
 24. [x] **IK V5.4 수정** - PHASE_LIFT 추가 + Good Grasp 조건 + 그리퍼 1.1
-25. [ ] **IK V5.4 학습** - 펜 수직, 6단계 완전한 작업 ← 현재
-26. [ ] **IK V5 Level 1~3 학습** - 점진적 난이도 증가
-27. [ ] 성공률 > 50% 확인 후 다음 단계 진행
-28. [ ] Feasibility Classifier 학습 (MLP)
-29. [ ] Sim2Real 전이 테스트
+25. [x] **IK V5.4 학습 (30K)** - Reward Hacking 발견 (로봇 뒤집어짐)
+26. [x] **IK V5.5 수정** - 위치 조건부 자세 reward
+27. [x] **IK V5.6 수정** - 점진적 보상 증가 + Phase 체류 패널티
+28. [x] **IK V5.6 학습 (4K)** - DESCEND 87%, GRASP 0% (전환 실패)
+29. [x] **IK V5.7 수정** - 5단계로 간소화 (FINE_ALIGN 제거)
+30. [ ] **IK V5.7 학습** - 펜 수직, 5단계 완전한 작업 ← 현재
+31. [ ] **IK V5 Level 1~3 학습** - 점진적 난이도 증가
+32. [ ] 성공률 > 50% 확인 후 다음 단계 진행
+33. [ ] Feasibility Classifier 학습 (MLP)
+34. [ ] Sim2Real 전이 테스트
 
 ---
 
@@ -1375,7 +1380,10 @@ python pen_grasp_rl/scripts/play_ik_v5.py --checkpoint /path/to/model.pt --level
 | 2024-12-22 | **IK V5.3 Play 테스트**: success=106 달성! 그리퍼 닫기/LIFT 문제 발견 | - |
 | 2024-12-22 | **IK V5.4**: PHASE_LIFT 추가 + Good Grasp 조건 + 그리퍼 1.1 | `2495832` |
 | 2024-12-23 | **IK V5.4 학습 (30K)**: Reward Hacking 발견 - 로봇 뒤집어짐 | - |
-| 2024-12-23 | **IK V5.5**: 위치 조건부 자세 reward (exponential) | (현재) |
+| 2024-12-23 | **IK V5.5**: 위치 조건부 자세 reward (exponential) | - |
+| 2024-12-23 | **IK V5.6**: 점진적 보상 증가 + Phase 체류 패널티 | - |
+| 2024-12-23 | **IK V5.6 학습 (4K)**: DESCEND 87%, GRASP 0% (전환 실패) | - |
+| 2024-12-23 | **IK V5.7**: 5단계로 간소화 (FINE_ALIGN 제거) | `9c8e149` |
 
 ---
 
@@ -1585,3 +1593,79 @@ rewards += rew_scale_phase_stagnation * phase_step_count
 | 다음 phase 가치 | 불명확 | 점진적으로 증가 |
 
 **다음 단계**: V5.6 학습 후 결과 확인
+
+---
+
+## IK V5.7 - 5단계로 간소화 (FINE_ALIGN 제거)
+
+**날짜**: 2024-12-23
+
+### V5.6 학습 분석 (4000 iterations)
+
+V5.6 학습 결과:
+- DESCEND 단계: 87.3% 도달
+- GRASP 단계: 0% (전환 실패)
+
+**문제점**: DESCEND → GRASP 전환이 안 됨
+- 조건: `dist_cap < 2cm` AND `dot < -0.99`
+- ALIGN의 exponential 보너스로 이미 dot ~0.98까지 도달
+- 별도 FINE_ALIGN 단계 불필요
+
+### V5.7 변경사항
+
+**1. 6단계 → 5단계 간소화**:
+```
+V5.6 (6단계):
+APPROACH → ALIGN → FINE_ALIGN → DESCEND → GRASP → LIFT
+
+V5.7 (5단계):
+APPROACH → ALIGN → DESCEND → GRASP → LIFT
+```
+
+**2. DESCEND 단계 개선 (FINE_ALIGN 기능 통합)**:
+- 정밀 정렬 + 캡 접근을 동시 수행
+- `perpendicular_dist` → `distance_to_cap` 기반 보상 변경
+- 정밀 정렬에 exponential 보너스 추가 (dot > -0.95부터)
+
+```python
+# DESCEND 보상 (V5.7)
+# 1. 정렬 보상 (선형)
+rewards += rew_scale_descend * align_progress  # -dot
+
+# 2. 정밀 정렬 exponential 보너스
+if align_progress > 0.95:
+    fine_exp = exp((align_progress - 0.95) * 30.0)
+    rewards += 2.0 * fine_exp
+
+# 3. 캡 접근 보상 (distance_to_cap 기반)
+cap_approach = exp(-distance_to_cap * 20.0)
+rewards += 5.0 * cap_approach
+
+# 4. 캡 접근 진행 보상
+descend_progress = prev_dist - distance_to_cap
+rewards += 10.0 * clamp(descend_progress * 100, 0, 1)
+```
+
+**3. 전환 조건 조정**:
+
+| 전환 | V5.6 | V5.7 |
+|------|------|------|
+| ALIGN → DESCEND | dot < -0.98, perp < 3cm | dot < -0.85, perp < 4cm |
+| DESCEND → GRASP | dist_cap < 2cm | dist_cap < 2cm, dot < -0.98 |
+
+**4. 코드 정리**:
+- `PHASE_FINE_ALIGN` 상수 제거
+- `fine_align_target_pos` → `descend_target_pos` 변경
+- `FINE_ALIGN_ROTATION_SPEED` → `TCP_ROTATION_SPEED` 변경
+- TensorBoard 로깅에서 `fine_align_ratio` 제거
+
+### 예상 효과
+
+| 항목 | V5.6 | V5.7 |
+|------|------|------|
+| 단계 수 | 6 | 5 |
+| DESCEND 역할 | 캡 접근만 | 정밀 정렬 + 캡 접근 |
+| GRASP 진입 조건 | dist_cap < 2cm | dist_cap < 2cm + dot < -0.98 |
+| 전환 복잡도 | 높음 (2번 전환) | 낮음 (1번 전환) |
+
+**다음 단계**: V5.7 학습 후 GRASP 도달률 확인
