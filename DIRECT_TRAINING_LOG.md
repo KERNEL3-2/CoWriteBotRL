@@ -2014,5 +2014,80 @@ python pen_grasp_rl/scripts/train_v6.py --headless --num_envs 4096 --level 0 --f
 3. **단계 단순화**: 4단계 → 2단계 → 전환 실패 가능성 감소
 4. **성공 조건 단순화**: dot 조건 제거 → 위치만 잘 맞추면 성공
 
-**다음 단계**: V6 Level 0 학습 진행
+### V6 학습 결과 (1100 iterations)
+
+**학습 그래프**:
+
+![V6 Training](images/e0509_ik_v6_1100.png)
+
+| 지표 | 초기값 | 최종값 (1100 iter) | 변화 |
+|------|--------|-------------------|------|
+| Mean Reward | -96 | **1,420** | +1,516 |
+| perp_dist | 0.22m | **0.012m** | -95% ✅ |
+| dist_to_cap | 0.41m | 0.079m | -81% |
+| grasp_ratio | 0% | 0% | ❌ 문제 |
+
+**Play 테스트 결과**:
+- 위치 접근: ✅ 거의 완벽
+- Z축 자세 정렬: ✅ 자동 계산으로 완벽
+- GRASP 전환: ❌ 경계에서 진동, 잘못된 위치에서 그립 시도
+
+**문제점 발견**:
+1. **GRASP 경계 진동**: `dist_to_cap=0.03m` 조건에서 들어갔다 나왔다 반복
+2. **부정확한 위치에서 그립**: 조건이 너무 느슨해서 실제 잡을 수 없는 위치에서 GRASP 진입
+3. **GRASP 보상 부족**: APPROACH 보상이 더 안정적 → RL이 APPROACH 선호
+
+---
+
+### V6.1 수정 (2024-12-23)
+
+**문제 분석**:
+- `APPROACH_TO_GRASP_DIST = 0.03m` (3cm)는 실제로 펜을 잡기 어려운 거리
+- `APPROACH_TO_GRASP_PERP = 0.015m` (1.5cm)도 너무 느슨
+- GRASP 보상이 APPROACH 대비 매력적이지 않음
+
+**변경 1: GRASP 전환 조건 강화**:
+```python
+# 기존 (V6)
+APPROACH_TO_GRASP_DIST = 0.03    # 3cm
+APPROACH_TO_GRASP_PERP = 0.015   # 1.5cm
+
+# 수정 (V6.1)
+APPROACH_TO_GRASP_DIST = 0.015   # 1.5cm (절반으로)
+APPROACH_TO_GRASP_PERP = 0.008   # 8mm (거의 절반)
+```
+
+**변경 2: GRASP 보상 강화**:
+```python
+# 기존 (V6)
+rew_scale_grasp_close = 5.0
+rew_scale_grasp_hold = 10.0
+rew_scale_phase_transition = 50.0
+
+# 수정 (V6.1)
+rew_scale_grasp_close = 10.0       # 2배
+rew_scale_grasp_hold = 20.0        # 2배
+rew_scale_phase_transition = 100.0 # 2배
+```
+
+**변경 3: 관찰 차원 수정**:
+```python
+observation_space = 27  # 24 → 27 (실제 차원에 맞춤)
+# 구성: joint_pos(6) + joint_vel(6) + grasp_pos_local(3) + cap_pos_local(3) +
+#       rel_pos(3) + pen_z(3) + perp_dist(1) + dist_cap(1) + phase(1) = 27
+```
+
+**V6.1 기대 효과**:
+1. **진동 감소**: 더 정확한 위치에서만 GRASP 전환
+2. **실제 잡기 성공률 향상**: 1.5cm, 8mm면 물리적으로 잡을 수 있는 위치
+3. **GRASP 유지 유도**: 강화된 보상으로 GRASP ratio 안정화
+
+**학습 명령어**:
+```bash
+cd ~/IsaacLab
+source ~/isaacsim_env/bin/activate
+python pen_grasp_rl/scripts/train_v6.py --headless --num_envs 4096 --level 0
+```
+
+**다음 단계**: V6.1 학습 진행 후 GRASP 전환 정확도 확인
 

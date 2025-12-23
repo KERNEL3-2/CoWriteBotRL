@@ -57,9 +57,9 @@ PEN_LENGTH = 0.1207  # 120.7mm
 PHASE_APPROACH = 0    # RL: 펜 캡 위치로 접근 (자세는 자동)
 PHASE_GRASP = 1       # 그리퍼 닫기 → Good Grasp 시 성공
 
-# V6: 단계 전환 조건 (단순화 - 자세는 자동이므로 거리만)
-APPROACH_TO_GRASP_DIST = 0.03    # 캡까지 거리 < 3cm면 GRASP 전환
-APPROACH_TO_GRASP_PERP = 0.015   # 펜 축에서 벗어난 거리 < 1.5cm
+# V6.1: 단계 전환 조건 (더 엄격하게 - 실제로 잡을 수 있는 위치)
+APPROACH_TO_GRASP_DIST = 0.015   # 캡까지 거리 < 1.5cm (3cm→1.5cm)
+APPROACH_TO_GRASP_PERP = 0.008   # 펜 축에서 벗어난 거리 < 8mm (1.5cm→8mm)
 
 # GRASP 설정
 GRIPPER_CLOSE_TARGET = 1.1        # 그리퍼 닫기 목표
@@ -92,7 +92,7 @@ class E0509IKEnvV6Cfg(DirectRLEnvCfg):
     episode_length_s = 15.0
     action_scale = 0.03       # V6: 위치만 제어하므로 스케일 약간 증가
     action_space = 3          # V6: [Δx, Δy, Δz] 위치만!
-    observation_space = 24    # V6: 자세 관련 제거 (간소화)
+    observation_space = 27    # V6: 실제 관찰 차원 (6+6+3+3+3+3+1+1+1)
     state_space = 0
 
     # Curriculum Learning 설정
@@ -203,13 +203,13 @@ class E0509IKEnvV6Cfg(DirectRLEnvCfg):
     rew_scale_perp_dist = -5.0         # 펜 축에서 벗어난 거리 페널티
     rew_scale_approach_progress = 5.0  # 접근 진행 보상
 
-    # GRASP 단계
-    rew_scale_grasp_close = 5.0        # 그리퍼 닫기 보상
-    rew_scale_grasp_hold = 10.0        # 위치 유지 보상
+    # GRASP 단계 (V6.1: 보상 강화)
+    rew_scale_grasp_close = 10.0       # 그리퍼 닫기 보상 (5→10)
+    rew_scale_grasp_hold = 20.0        # 위치 유지 보상 (10→20)
 
     # 공통
-    rew_scale_success = 200.0          # V6: 성공 보상 증가
-    rew_scale_phase_transition = 50.0
+    rew_scale_success = 200.0          # V6: 성공 보상
+    rew_scale_phase_transition = 100.0 # 전환 보상 (50→100)
     rew_scale_action = -0.01           # V6: 액션 페널티 약간 증가
 
     # 페널티
