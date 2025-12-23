@@ -744,19 +744,28 @@ class E0509IKEnvV5(DirectRLEnv):
             rewards[fine_align_mask] += self.cfg.rew_scale_fine_align * align_progress
 
         # =========================================================
-        # DESCEND 단계 (TCP) - 고정 보상
+        # DESCEND 단계 (TCP) - 이전 phase 보상 유지 + 하강 보상
         # =========================================================
         descend_mask = (self.phase == PHASE_DESCEND)
         if descend_mask.any():
-            # 하강 진행에 따른 보상
+            # 이전 phase(FINE_ALIGN) 보상 유지: 정렬 유지
+            align_progress = -dot_product[descend_mask]
+            rewards[descend_mask] += self.cfg.rew_scale_fine_align * align_progress
+
+            # 추가: 하강 진행에 따른 보상
             descend_progress = self.prev_distance_to_cap[descend_mask] - distance_to_cap[descend_mask]
             rewards[descend_mask] += self.cfg.rew_scale_descend * torch.clamp(descend_progress * 100, min=0, max=1)
 
         # =========================================================
-        # GRASP 단계 (TCP)
+        # GRASP 단계 (TCP) - 이전 phase 보상 유지 + 그립 보상
         # =========================================================
         grasp_mask = (self.phase == PHASE_GRASP)
         if grasp_mask.any():
+            # 이전 phase 보상 유지: 정렬 유지
+            align_progress = -dot_product[grasp_mask]
+            rewards[grasp_mask] += self.cfg.rew_scale_fine_align * align_progress
+
+            # 추가: 그립 보상
             gripper_pos = self.robot.data.joint_pos[:, self._gripper_joint_ids]
             gripper_closed_amount = gripper_pos.mean(dim=-1)
             rewards[grasp_mask] += self.cfg.rew_scale_grasp_close * gripper_closed_amount[grasp_mask]
