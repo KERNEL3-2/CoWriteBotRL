@@ -1344,11 +1344,13 @@ python pen_grasp_rl/scripts/play_ik_v5.py --checkpoint /path/to/model.pt --level
 27. [x] **IK V5.6 수정** - 점진적 보상 증가 + Phase 체류 패널티
 28. [x] **IK V5.6 학습 (4K)** - DESCEND 87%, GRASP 0% (전환 실패)
 29. [x] **IK V5.7 수정** - 5단계로 간소화 (FINE_ALIGN 제거)
-30. [ ] **IK V5.7 학습** - 펜 수직, 5단계 완전한 작업 ← 현재
-31. [ ] **IK V5 Level 1~3 학습** - 점진적 난이도 증가
-32. [ ] 성공률 > 50% 확인 후 다음 단계 진행
-33. [ ] Feasibility Classifier 학습 (MLP)
-34. [ ] Sim2Real 전이 테스트
+30. [x] **IK V5.7 학습 (1K)** - DESCEND 94%, GRASP 0% (TCP 속도 문제)
+31. [x] **IK V5.8 수정** - 전면 RL 제어 (TCP 하드코딩 제거)
+32. [ ] **IK V5.8 학습** - 펜 수직, 전면 RL 제어 ← 현재
+33. [ ] **IK V5 Level 1~3 학습** - 점진적 난이도 증가
+34. [ ] 성공률 > 50% 확인 후 다음 단계 진행
+35. [ ] Feasibility Classifier 학습 (MLP)
+36. [ ] Sim2Real 전이 테스트
 
 ---
 
@@ -1384,6 +1386,8 @@ python pen_grasp_rl/scripts/play_ik_v5.py --checkpoint /path/to/model.pt --level
 | 2024-12-23 | **IK V5.6**: 점진적 보상 증가 + Phase 체류 패널티 | - |
 | 2024-12-23 | **IK V5.6 학습 (4K)**: DESCEND 87%, GRASP 0% (전환 실패) | - |
 | 2024-12-23 | **IK V5.7**: 5단계로 간소화 (FINE_ALIGN 제거) | `9c8e149` |
+| 2024-12-23 | **IK V5.7 학습 (1K)**: DESCEND 94%, GRASP 0% (TCP 속도 문제) | - |
+| 2024-12-23 | **IK V5.8**: 전면 RL 제어 (TCP 하드코딩 제거) | `e8a5075` |
 
 ---
 
@@ -1669,3 +1673,101 @@ rewards += 10.0 * clamp(descend_progress * 100, 0, 1)
 | 전환 복잡도 | 높음 (2번 전환) | 낮음 (1번 전환) |
 
 **다음 단계**: V5.7 학습 후 GRASP 도달률 확인
+
+---
+
+## IK V5.8 - 전면 RL 제어 (TCP 하드코딩 제거)
+
+**날짜**: 2024-12-23
+
+### V5.7 학습 분석 (1000 iterations)
+
+V5.7 학습 결과:
+- DESCEND 단계: 94% 도달
+- GRASP 단계: 0% (여전히 전환 실패)
+- Value function loss: 5000 → 1800 (불안정)
+
+**문제점**: TCP 하드코딩 속도가 너무 느림
+- `DESCEND_SPEED = 0.002` (2mm/step)
+- RL → TCP 전환 시 Value function 불연속
+
+**근본적 의문**: TCP 제어가 정말 필요한가?
+- 모든 단계에서 IK는 사용 (Cartesian → Joint 변환)
+- 차이점: 누가 Cartesian 명령을 주는가 (RL vs 하드코딩)
+- RL이 APPROACH/ALIGN을 학습했다면, DESCEND/GRASP/LIFT도 학습 가능
+
+### V5.8 변경사항
+
+**1. 전면 RL 제어**:
+```
+V5.7 (Hybrid):
+APPROACH/ALIGN: RL 정책 → IK
+DESCEND/GRASP/LIFT: 하드코딩 TCP → IK
+
+V5.8 (Full RL):
+모든 단계: RL 정책 → IK
+그리퍼만: 단계별 open/close (단순 규칙)
+```
+
+**2. 코드 단순화**:
+```python
+# V5.7 (복잡)
+def _apply_action(self):
+    if tcp_mask.any():
+        tcp_actions = self._compute_tcp_actions(...)  # 100줄+ 하드코딩
+        scaled_actions[tcp_mask] = tcp_actions[tcp_mask]
+    ...
+
+# V5.8 (단순)
+def _apply_action(self):
+    scaled_actions = self.actions * self.action_scale  # RL 출력 그대로 사용
+    ...
+```
+
+**3. 관찰 공간 변경**:
+- V5.7: 37차원 (tcp_active 포함)
+- V5.8: 36차원 (tcp_active 제거 - 더 이상 의미 없음)
+
+**4. 보상 함수 업데이트**:
+
+GRASP 단계:
+```python
+# 위치 유지 보상 (RL이 가만히 있도록 유도)
+rewards += 5.0 * exp(-distance_to_cap * 50.0)
+
+# grasp_step_count 증가 (TCP에서 이동)
+self.grasp_step_count[grasp_mask] += 1
+```
+
+LIFT 단계:
+```python
+# 높이 상승 보상
+current_height = grasp_pos[:, 2] - lift_start_pos[:, 2]
+rewards += 10.0 * clamp(current_height / LIFT_HEIGHT, max=1.0)
+
+# lift_complete 체크 (TCP에서 이동)
+if current_height >= LIFT_HEIGHT:
+    self.lift_complete[idx] = True
+```
+
+**5. 제거된 항목**:
+- `_compute_tcp_actions()` 함수 (83줄)
+- `TCP_ROTATION_SPEED`, `DESCEND_SPEED`, `LIFT_SPEED` 상수
+- `tcp_active` 관찰값
+
+### 예상 효과
+
+| 항목 | V5.7 (Hybrid) | V5.8 (Full RL) |
+|------|---------------|----------------|
+| 제어 방식 | RL + TCP 혼합 | 전부 RL |
+| Value function | 불연속 (전환점) | 연속 |
+| 코드 복잡도 | 높음 | 낮음 |
+| 적응성 | TCP는 고정 | 모든 상황 학습 |
+| DESCEND 속도 | 2mm/step 고정 | RL이 최적화 |
+
+**핵심 장점**:
+1. Value function이 연속적으로 학습 가능
+2. RL이 상황에 맞게 속도/동작 조절
+3. 코드 단순화 (-80줄)
+
+**다음 단계**: V5.8 학습 후 GRASP 도달률 확인
