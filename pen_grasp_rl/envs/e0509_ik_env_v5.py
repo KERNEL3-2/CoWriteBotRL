@@ -1,18 +1,19 @@
 """
-E0509 IK 환경 V5.4 (Hybrid RL + TCP + LIFT + Good Grasp)
+E0509 IK 환경 V5.7 (Hybrid RL + TCP + LIFT + Good Grasp)
 
-=== V5.4 변경사항 (V5.3 대비) ===
-1. PHASE_LIFT 추가 (6단계): 펜 들어올리기 + 성공 종료
-   - GRASP에서 Good Grasp + 30스텝 유지 후 LIFT로 전환
-   - LIFT: 월드 Z축 방향으로 5cm 상승
-   - LIFT 완료 + Good Grasp 유지 시 성공
+=== V5.7 변경사항 (V5.6 대비) ===
+1. 5단계로 간소화 (FINE_ALIGN 제거):
+   - FINE_ALIGN 단계를 DESCEND에 통합
+   - DESCEND에서 정밀 정렬 + 캡 접근을 동시 수행
 
-2. Good Grasp 조건 (펜이 그리퍼에 제대로 잡힌 상태):
-   - perp_dist < 8mm (펜 축과 grasp point 일치)
-   - dot < -0.98 (자세 정렬)
-   - gripper_amount: 0.8 ~ 1.05 (펜에 걸린 상태, 완전히 닫힌 게 아님)
+2. DESCEND 단계 개선:
+   - perpendicular_dist → distance_to_cap 기반 보상
+   - 정밀 정렬에 exponential 보너스 추가 (dot > -0.95)
+   - 캡 접근 진행 보상 추가
 
-3. 그리퍼 닫기 강화: gripper_target 0.7 → 1.0
+3. 전환 조건 조정:
+   - ALIGN → DESCEND: dot < -0.85, perp_dist < 4cm
+   - DESCEND → GRASP: dist_cap < 2cm, dot < -0.98
 
 === Curriculum Levels ===
 Level 0: 펜 수직 (tilt_max = 0°)     - 기본 동작 학습
@@ -20,13 +21,12 @@ Level 1: 펜 10° 기울기               - 약간의 변형 적응
 Level 2: 펜 20° 기울기               - 중간 난이도
 Level 3: 펜 30° 기울기               - 최종 목표
 
-=== 단계 (Phase) - 6단계 ===
+=== 단계 (Phase) - 5단계 ===
 0. APPROACH: 펜 축 방향에서 접근 + 자세 정렬 시작 (RL)
 1. ALIGN: 위치 미세조정 + 자세 정렬 완료 (RL)
-2. FINE_ALIGN: 정밀 자세 정렬 (TCP)
-3. DESCEND: 펜 캡 방향 하강 + 자세 유지 (TCP)
-4. GRASP: 그리퍼 닫기 (Good Grasp + 30스텝) (TCP)
-5. LIFT: 펜 들어올리기 5cm → 성공 종료 (TCP)
+2. DESCEND: 정밀 정렬 + 펜 캡 접근 (TCP)
+3. GRASP: 그리퍼 닫기 (Good Grasp + 30스텝) (TCP)
+4. LIFT: 펜 들어올리기 5cm → 성공 종료 (TCP)
 """
 from __future__ import annotations
 
@@ -59,32 +59,30 @@ PEN_USD_PATH = os.path.join(_SCRIPT_DIR, "..", "models", "pen.usd")
 
 PEN_LENGTH = 0.1207  # 120.7mm
 
-# 단계 정의 (V5.4: LIFT 추가)
+# 단계 정의 (V5.7: 5단계로 간소화)
 PHASE_APPROACH = 0    # RL: 펜 축 방향에서 접근
 PHASE_ALIGN = 1       # RL: 대략적 자세 정렬
-PHASE_FINE_ALIGN = 2  # TCP: 정밀 자세 정렬 (dot → -1)
-PHASE_DESCEND = 3     # TCP: 수직 하강
-PHASE_GRASP = 4       # TCP: 그리퍼 닫기
-PHASE_LIFT = 5        # TCP: 펜 들어올리기 + Home 복귀
+PHASE_DESCEND = 2     # TCP: 정밀 정렬 + 캡 접근
+PHASE_GRASP = 3       # TCP: 그리퍼 닫기
+PHASE_LIFT = 4        # TCP: 펜 들어올리기 + Home 복귀
 
 # Pre-grasp 설정
 PRE_GRASP_AXIS_DIST = 0.07  # 캡에서 펜 축 방향으로 7cm
 
-# 단계 전환 조건 (V5.2: 위치 + 자세 동시 체크)
+# 단계 전환 조건 (V5.7)
 APPROACH_TO_ALIGN_AXIS_DIST = 0.10      # 축 방향 거리 < 10cm
 APPROACH_TO_ALIGN_PERP_DIST = 0.05      # 축에서 벗어난 거리 < 5cm
-ALIGN_TO_FINE_ALIGN_DOT = -0.85         # 대략적 정렬
-ALIGN_TO_FINE_ALIGN_PERP_DIST = 0.04    # V5.2: 축 거리 < 4cm 추가
-FINE_ALIGN_TO_DESCEND_DOT = -0.98       # 정밀 정렬 완료
-FINE_ALIGN_TO_DESCEND_PERP_DIST = 0.03  # V5.2: 축 거리 < 3cm 추가
-DESCEND_TO_GRASP_DIST = 0.02            # 캡까지 거리 < 2cm
+ALIGN_TO_DESCEND_DOT = -0.85            # V5.7: 대략적 정렬
+ALIGN_TO_DESCEND_PERP_DIST = 0.04       # V5.7: 축 거리 < 4cm
+DESCEND_TO_GRASP_DIST = 0.02            # V5.7: 캡까지 거리 < 2cm
+DESCEND_TO_GRASP_DOT = -0.98            # V5.7: 정밀 정렬
 
-# 성공 조건 (V5.4: 강화)
+# 성공 조건
 SUCCESS_DIST = 0.005    # 5mm (거의 일치)
-SUCCESS_DOT = -0.99     # dot < -0.99 (거의 -1)
+SUCCESS_DOT = -0.98     # V5.7: DESCEND 조건과 동일
 
-# Fine Align TCP 제어 설정
-FINE_ALIGN_ROTATION_SPEED = 0.03  # rad/step
+# TCP 제어 설정 (V5.7)
+TCP_ROTATION_SPEED = 0.03  # rad/step (V5.7: FINE_ALIGN → TCP)
 DESCEND_SPEED = 0.002             # m/step
 DESCEND_POSE_CORRECTION_GAIN = 1.5  # 자세 보정 강화
 
@@ -123,7 +121,7 @@ class E0509IKEnvV5Cfg(DirectRLEnvCfg):
     episode_length_s = 15.0
     action_scale = 0.02
     action_space = 6      # [Δx, Δy, Δz, Δroll, Δpitch, Δyaw]
-    observation_space = 37  # 기존 36 + fine_align_active(1)
+    observation_space = 37  # 기존 36 + tcp_active(1)
     state_space = 0
 
     # Curriculum Learning 설정
@@ -225,10 +223,10 @@ class E0509IKEnvV5Cfg(DirectRLEnvCfg):
     ee_offset_pos = [0.0, 0.0, 0.15]
 
     # ==========================================================================
-    # 보상 스케일 (V5.6 - 점진적 증가)
+    # 보상 스케일 (V5.7 - 5단계)
     # ==========================================================================
     # 목표: 다음 phase로 갈수록 보상 증가 → 방향성 명확
-    # APPROACH(3-4) < ALIGN(4-5) < FINE_ALIGN(5-6) < DESCEND(6-7) < GRASP(8-10)
+    # APPROACH(3-4) < ALIGN(4-5) < DESCEND(6-8) < GRASP(8-10)
 
     # APPROACH 단계 (목표 ~3-4/step)
     rew_scale_axis_dist = -2.0
@@ -243,11 +241,9 @@ class E0509IKEnvV5Cfg(DirectRLEnvCfg):
     exponential_align_threshold = 0.80
     exponential_align_scale = 10.0
 
-    # FINE_ALIGN (목표 ~5-6/step)
-    rew_scale_fine_align = 6.0     # V5.6: 2.0 → 6.0
-
-    # DESCEND (목표 ~6-7/step)
-    rew_scale_descend = 7.0        # V5.6: 3.0 → 7.0
+    # DESCEND (목표 ~6-8/step) - V5.7: 정밀 정렬 + 캡 접근 통합
+    rew_scale_descend = 7.0        # 기본 정렬 보상
+    rew_scale_descend_align = 6.0  # V5.7: 정밀 정렬 (구 fine_align)
 
     # GRASP (목표 ~8-10/step)
     rew_scale_grasp_close = 4.0    # V5.6: 5.0 → 4.0
@@ -330,8 +326,8 @@ class E0509IKEnvV5(DirectRLEnv):
         # ALIGN 단계 목표 위치
         self.align_target_pos = torch.zeros(self.num_envs, 3, device=self.device)
 
-        # FINE_ALIGN 목표 위치 (고정)
-        self.fine_align_target_pos = torch.zeros(self.num_envs, 3, device=self.device)
+        # DESCEND 목표 위치 (V5.7: ALIGN→DESCEND 전환 시 설정)
+        self.descend_target_pos = torch.zeros(self.num_envs, 3, device=self.device)
 
         # 그리퍼 상태
         self.gripper_closed = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
@@ -375,7 +371,7 @@ class E0509IKEnvV5(DirectRLEnv):
         # RL 단계 (APPROACH, ALIGN)
         rl_mask = (self.phase == PHASE_APPROACH) | (self.phase == PHASE_ALIGN)
 
-        # TCP 제어 단계 (FINE_ALIGN, DESCEND, GRASP)
+        # TCP 제어 단계 (DESCEND, GRASP, LIFT) - V5.7
         tcp_mask = ~rl_mask
 
         # ============================================================
@@ -419,7 +415,7 @@ class E0509IKEnvV5(DirectRLEnv):
         self.robot.set_joint_position_target(full_target)
 
     def _compute_tcp_actions(self, ee_pos: torch.Tensor, ee_quat: torch.Tensor) -> torch.Tensor:
-        """TCP 제어 액션 계산 (FINE_ALIGN, DESCEND, GRASP)"""
+        """TCP 제어 액션 계산 (V5.7: DESCEND, GRASP, LIFT)"""
         tcp_actions = torch.zeros(self.num_envs, 6, device=self.device)
 
         pen_z = self._get_pen_z_axis()
@@ -428,37 +424,7 @@ class E0509IKEnvV5(DirectRLEnv):
         grasp_pos = self._get_grasp_point()
 
         # ============================================================
-        # FINE_ALIGN: 그리퍼 z축을 펜 z축과 정렬 (dot → -1)
-        # ============================================================
-        fine_align_mask = (self.phase == PHASE_FINE_ALIGN)
-        if fine_align_mask.any():
-            # 목표: gripper_z와 pen_z가 반대 방향 (dot = -1)
-            # 회전축: gripper_z × (-pen_z)
-            target_z = -pen_z[fine_align_mask]
-            current_z = gripper_z[fine_align_mask]
-
-            # 회전축 계산 (cross product)
-            rotation_axis = torch.cross(current_z, target_z, dim=-1)
-            rotation_axis_norm = torch.norm(rotation_axis, dim=-1, keepdim=True) + 1e-6
-            rotation_axis = rotation_axis / rotation_axis_norm
-
-            # 회전 각도 (dot product로부터)
-            dot = torch.sum(current_z * target_z, dim=-1, keepdim=True)
-            angle = torch.acos(torch.clamp(dot, -1.0, 1.0))
-
-            # 회전 속도 제한
-            rotation_delta = torch.clamp(angle, max=FINE_ALIGN_ROTATION_SPEED)
-            rotation_vec = rotation_axis * rotation_delta
-
-            # 위치 고정 (fine_align_target_pos 유지)
-            pos_error = self.fine_align_target_pos[fine_align_mask] - grasp_pos[fine_align_mask]
-            tcp_actions[fine_align_mask, :3] = pos_error * 0.5  # 위치 보정
-
-            # 회전만 적용
-            tcp_actions[fine_align_mask, 3:] = rotation_vec.squeeze(-1) if rotation_vec.dim() > 2 else rotation_vec
-
-        # ============================================================
-        # DESCEND: 펜 캡 방향으로 이동 + Z축 정렬 유지 (V5.1 수정)
+        # DESCEND: 펜 캡 방향으로 이동 + 정밀 Z축 정렬 (V5.7: 통합)
         # ============================================================
         descend_mask = (self.phase == PHASE_DESCEND)
         if descend_mask.any():
@@ -479,7 +445,7 @@ class E0509IKEnvV5(DirectRLEnv):
             dot = torch.sum(current_z * target_z, dim=-1, keepdim=True)
             angle = torch.acos(torch.clamp(dot, -1.0, 1.0))
             # 자세 보정 속도 (DESCEND_POSE_CORRECTION_GAIN)
-            rotation_delta = torch.clamp(angle, max=FINE_ALIGN_ROTATION_SPEED * DESCEND_POSE_CORRECTION_GAIN)
+            rotation_delta = torch.clamp(angle, max=TCP_ROTATION_SPEED * DESCEND_POSE_CORRECTION_GAIN)
             tcp_actions[descend_mask, 3:] = (rotation_axis * rotation_delta).squeeze(-1) if (rotation_axis * rotation_delta).dim() > 2 else rotation_axis * rotation_delta
 
         # ============================================================
@@ -527,7 +493,7 @@ class E0509IKEnvV5(DirectRLEnv):
             rotation_axis = rotation_axis / rotation_axis_norm
             dot = torch.sum(current_z * target_z, dim=-1, keepdim=True)
             angle = torch.acos(torch.clamp(dot, -1.0, 1.0))
-            rotation_delta = torch.clamp(angle, max=FINE_ALIGN_ROTATION_SPEED)
+            rotation_delta = torch.clamp(angle, max=TCP_ROTATION_SPEED)
             tcp_actions[lift_mask, 3:] = (rotation_axis * rotation_delta).squeeze(-1) if (rotation_axis * rotation_delta).dim() > 2 else rotation_axis * rotation_delta
 
         return tcp_actions
@@ -636,10 +602,10 @@ class E0509IKEnvV5(DirectRLEnv):
         perpendicular_dist, axis_distance, _ = self._compute_axis_metrics()
 
         # 현재 단계 (정규화)
-        phase_normalized = self.phase.float() / 5.0  # V5.4: 6단계 (0~5)
+        phase_normalized = self.phase.float() / 4.0  # V5.7: 5단계 (0~4)
 
         # TCP 제어 활성화 여부
-        tcp_active = ((self.phase >= PHASE_FINE_ALIGN) & (self.phase <= PHASE_LIFT)).float()  # V5.4: LIFT 포함
+        tcp_active = ((self.phase >= PHASE_DESCEND) & (self.phase <= PHASE_LIFT)).float()  # V5.7: DESCEND~LIFT
 
         obs = torch.cat([
             joint_pos,                           # 6
@@ -735,42 +701,30 @@ class E0509IKEnvV5(DirectRLEnv):
             rewards[align_mask] += self.cfg.rew_scale_on_axis_bonus * on_axis_align.float()
 
         # =========================================================
-        # FINE_ALIGN 단계 (TCP) - 정렬 보상 + exponential
-        # =========================================================
-        fine_align_mask = (self.phase == PHASE_FINE_ALIGN)
-        if fine_align_mask.any():
-            # 정렬 개선에 따른 보상 (선형)
-            align_progress = -dot_product[fine_align_mask]  # 클수록 좋음 (최대 1)
-            rewards[fine_align_mask] += self.cfg.rew_scale_fine_align * align_progress
-
-            # 정밀 정렬 exponential 보너스 (dot > -0.95부터)
-            fine_exponential = torch.where(
-                align_progress > 0.95,
-                torch.exp((align_progress - 0.95) * 30.0),  # 0.95→1, 0.99→3.3, 1.0→4.5
-                torch.ones_like(align_progress)
-            )
-            rewards[fine_align_mask] += 2.0 * fine_exponential
-
-        # =========================================================
-        # DESCEND 단계 (TCP) - 이전 phase 보상 유지 + 하강 보상 + exponential
+        # DESCEND 단계 (TCP) - V5.7: 정밀 정렬 + 캡 접근 통합
         # =========================================================
         descend_mask = (self.phase == PHASE_DESCEND)
         if descend_mask.any():
-            # 이전 phase(FINE_ALIGN) 보상 유지: 정렬 유지 (선형)
-            align_progress = -dot_product[descend_mask]
-            rewards[descend_mask] += self.cfg.rew_scale_fine_align * align_progress
+            # 정렬 보상 (선형)
+            align_progress = -dot_product[descend_mask]  # 클수록 좋음 (최대 1)
+            rewards[descend_mask] += self.cfg.rew_scale_descend * align_progress
 
             # 정밀 정렬 exponential 보너스 (dot > -0.95부터)
             fine_exponential = torch.where(
                 align_progress > 0.95,
-                torch.exp((align_progress - 0.95) * 30.0),
+                torch.exp((align_progress - 0.95) * 30.0),  # 0.95→1, 0.98→2.5, 1.0→4.5
                 torch.ones_like(align_progress)
             )
             rewards[descend_mask] += 2.0 * fine_exponential
 
-            # 추가: 하강 진행에 따른 보상
+            # 캡 접근 보상 (V5.7: distance_to_cap 기반)
+            # 가까울수록 높은 보상 (exponential)
+            cap_approach_reward = torch.exp(-distance_to_cap[descend_mask] * 20.0)  # 2cm→0.67, 1cm→0.82
+            rewards[descend_mask] += 5.0 * cap_approach_reward
+
+            # 캡 접근 진행 보상
             descend_progress = self.prev_distance_to_cap[descend_mask] - distance_to_cap[descend_mask]
-            rewards[descend_mask] += self.cfg.rew_scale_descend * torch.clamp(descend_progress * 100, min=0, max=1)
+            rewards[descend_mask] += 10.0 * torch.clamp(descend_progress * 100, min=0, max=1)
 
         # =========================================================
         # GRASP 단계 (TCP) - 이전 phase 보상 유지 + 그립 보상 + exponential
@@ -779,7 +733,7 @@ class E0509IKEnvV5(DirectRLEnv):
         if grasp_mask.any():
             # 이전 phase 보상 유지: 정렬 유지 (선형)
             align_progress = -dot_product[grasp_mask]
-            rewards[grasp_mask] += self.cfg.rew_scale_fine_align * align_progress
+            rewards[grasp_mask] += self.cfg.rew_scale_descend_align * align_progress
 
             # 정밀 정렬 exponential 보너스 (dot > -0.95부터)
             fine_exponential = torch.where(
@@ -806,32 +760,21 @@ class E0509IKEnvV5(DirectRLEnv):
             self.align_target_pos[transition_to_align] = grasp_pos[transition_to_align].clone()
             self.phase_step_count[transition_to_align] = 0
 
-        # ALIGN → FINE_ALIGN (V5.2: 자세 + 위치 동시 체크)
-        transition_to_fine_align = (
-            align_mask &
-            (dot_product < ALIGN_TO_FINE_ALIGN_DOT) &
-            (perpendicular_dist < ALIGN_TO_FINE_ALIGN_PERP_DIST)
-        )
-        if transition_to_fine_align.any():
-            self.phase[transition_to_fine_align] = PHASE_FINE_ALIGN
-            rewards[transition_to_fine_align] += self.cfg.rew_scale_phase_transition
-            self.fine_align_target_pos[transition_to_fine_align] = grasp_pos[transition_to_fine_align].clone()
-            self.phase_step_count[transition_to_fine_align] = 0
-
-        # FINE_ALIGN → DESCEND (V5.2: 자세 + 위치 동시 체크)
+        # ALIGN → DESCEND (V5.7: 바로 DESCEND로 전환)
         transition_to_descend = (
-            fine_align_mask &
-            (dot_product < FINE_ALIGN_TO_DESCEND_DOT) &
-            (perpendicular_dist < FINE_ALIGN_TO_DESCEND_PERP_DIST)
+            align_mask &
+            (dot_product < ALIGN_TO_DESCEND_DOT) &
+            (perpendicular_dist < ALIGN_TO_DESCEND_PERP_DIST)
         )
         if transition_to_descend.any():
             self.phase[transition_to_descend] = PHASE_DESCEND
             rewards[transition_to_descend] += self.cfg.rew_scale_phase_transition
+            self.descend_target_pos[transition_to_descend] = grasp_pos[transition_to_descend].clone()
             self.prev_distance_to_cap[transition_to_descend] = distance_to_cap[transition_to_descend]
             self.phase_step_count[transition_to_descend] = 0
 
-        # DESCEND → GRASP
-        transition_to_grasp = descend_mask & (distance_to_cap < DESCEND_TO_GRASP_DIST) & (dot_product < SUCCESS_DOT)
+        # DESCEND → GRASP (V5.7: distance_to_cap + dot 조건)
+        transition_to_grasp = descend_mask & (distance_to_cap < DESCEND_TO_GRASP_DIST) & (dot_product < DESCEND_TO_GRASP_DOT)
         if transition_to_grasp.any():
             self.phase[transition_to_grasp] = PHASE_GRASP
             rewards[transition_to_grasp] += self.cfg.rew_scale_phase_transition
@@ -899,23 +842,21 @@ class E0509IKEnvV5(DirectRLEnv):
         if "log" not in self.extras:
             self.extras["log"] = {}
 
-        # Phase 분포를 비율로 기록 (0~1)
+        # Phase 분포를 비율로 기록 (0~1) - V5.7: 5단계
         total_envs = float(self.num_envs)
         self.extras["log"]["Phase/approach_ratio"] = phase_stats['approach'] / total_envs
         self.extras["log"]["Phase/align_ratio"] = phase_stats['align'] / total_envs
-        self.extras["log"]["Phase/fine_align_ratio"] = phase_stats['fine_align'] / total_envs
         self.extras["log"]["Phase/descend_ratio"] = phase_stats['descend'] / total_envs
         self.extras["log"]["Phase/grasp_ratio"] = phase_stats['grasp'] / total_envs
         self.extras["log"]["Phase/lift_ratio"] = phase_stats['lift'] / total_envs
         self.extras["log"]["Phase/total_success"] = float(phase_stats['total_success'])
 
-        # 콘솔 출력 (N step마다)
+        # 콘솔 출력 (N step마다) - V5.7: 5단계
         if self._global_step % self._phase_print_interval == 0:
             print(f"  [Step {self._global_step}] Phase: "
                   f"APP:{phase_stats['approach']} ALN:{phase_stats['align']} "
-                  f"FINE:{phase_stats['fine_align']} DESC:{phase_stats['descend']} "
-                  f"GRP:{phase_stats['grasp']} LIFT:{phase_stats['lift']} "
-                  f"| Success:{phase_stats['total_success']}", flush=True)
+                  f"DESC:{phase_stats['descend']} GRP:{phase_stats['grasp']} "
+                  f"LIFT:{phase_stats['lift']} | Success:{phase_stats['total_success']}", flush=True)
 
         return rewards
 
@@ -1149,15 +1090,14 @@ class E0509IKEnvV5(DirectRLEnv):
         return torch.stack([w, x, y, z], dim=-1)
 
     def get_phase_stats(self) -> dict:
-        """단계별 통계 (V5.4: LIFT 추가)"""
-        current_phases = torch.bincount(self.phase, minlength=6)  # V5.4: 6단계
+        """단계별 통계 (V5.7: 5단계)"""
+        current_phases = torch.bincount(self.phase, minlength=5)  # V5.7: 5단계
         return {
             "approach": current_phases[0].item(),
             "align": current_phases[1].item(),
-            "fine_align": current_phases[2].item(),
-            "descend": current_phases[3].item(),
-            "grasp": current_phases[4].item(),
-            "lift": current_phases[5].item(),  # V5.4
+            "descend": current_phases[2].item(),  # V5.7: FINE_ALIGN 제거
+            "grasp": current_phases[3].item(),
+            "lift": current_phases[4].item(),
             "total_success": self.success_count.sum().item(),
             "curriculum_level": self.cfg.curriculum_level,
         }
