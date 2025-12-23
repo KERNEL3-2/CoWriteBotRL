@@ -1771,3 +1771,105 @@ if current_height >= LIFT_HEIGHT:
 3. 코드 단순화 (-80줄)
 
 **다음 단계**: V5.8 학습 후 GRASP 도달률 확인
+
+---
+
+## IK V5.9 - LIFT 제거 + Hybrid Readiness 보상
+
+**날짜**: 2024-12-23
+
+### V5.8 학습 분석 (1700 iterations)
+
+V5.8 학습 결과:
+- DESCEND 단계: 96.8% 도달
+- GRASP 단계: 0% (여전히 전환 실패)
+- Value function loss: 256 (V5.7 대비 크게 개선)
+- Mean Episode Length: 449 (항상 타임아웃)
+
+**Play 테스트 결과**:
+- 학습 중: DESCEND 96.8%
+- Play 중: 대부분 ALIGN에서 정체
+- perp_dist: 0.04~0.12m (조건: <0.04m)
+- dot: -0.4 ~ -0.9 (조건: <-0.85)
+
+**문제 분석**:
+1. 학습 중 탐색 노이즈로 우연히 조건 달성
+2. Play (deterministic)에서는 조건 경계만 맴돌기
+3. 두 조건 동시 달성에 대한 보상 신호 부재
+
+### V5.9 변경사항
+
+**1. LIFT 단계 제거 (5단계 → 4단계)**:
+```
+V5.8: APPROACH → ALIGN → DESCEND → GRASP → LIFT → 성공
+V5.9: APPROACH → ALIGN → DESCEND → GRASP → 성공
+```
+
+성공 조건 단순화:
+- V5.8: LIFT 완료 + Good Grasp
+- V5.9: GRASP + Good Grasp + 30스텝 유지
+
+**2. Hybrid Readiness 보상 추가**:
+
+전환 준비도(Readiness): 다음 단계 전환 조건에 얼마나 가까운지를 연속적 보상으로 제공
+
+```python
+# ALIGN → DESCEND 전환 조건
+# dot < -0.85 AND perp_dist < 0.04m
+
+# Linear readiness (0~1로 정규화)
+dot_linear = clamp((-dot - 0.5) / 0.35, 0, 1)
+dist_linear = clamp((0.08 - perp_dist) / 0.04, 0, 1)
+
+# Hybrid 변환 적용
+dot_readiness = hybrid_readiness(dot_linear)
+dist_readiness = hybrid_readiness(dist_linear)
+
+# 곱으로 계산: 둘 다 높아야 높은 보상
+transition_readiness = dot_readiness × dist_readiness
+rewards += 5.0 * transition_readiness
+```
+
+**3. Hybrid Readiness 함수**:
+
+0~0.5: Sigmoid 스타일 (중간에서 급격)
+0.5~1.0: Exponential 스타일 (목표에서 급격)
+
+```
+보상
+1.0 |                          /
+    |                        /   ← exponential
+0.5 |                     /
+    |                  /         ← sigmoid
+0.0 |________________/
+    0              0.5           1
+```
+
+| 입력 x | 출력 (hybrid) | 특성 |
+|--------|---------------|------|
+| 0.0 | ~0.05 | 완만 시작 |
+| 0.25 | ~0.18 | sigmoid 구간 |
+| 0.5 | 0.5 | 경계점 |
+| 0.75 | ~0.75 | exponential 구간 |
+| 1.0 | 1.0 | 급격 마무리 |
+
+**4. 적용 위치**:
+
+| 전환 | 조건 | Readiness 보상 |
+|------|------|----------------|
+| ALIGN → DESCEND | dot < -0.85, perp_dist < 0.04 | dot_r × dist_r |
+| DESCEND → GRASP | dot < -0.98, dist_cap < 0.02 | dot_r × dist_r |
+
+### 핵심 아이디어
+
+**문제**: 하드 임계값 전환은 "거의 도달" 상태에 gradient 신호 없음
+**해결**: 두 조건의 곱으로 보상 → 동시 달성 유도
+
+| dot_r | dist_r | 보상 (곱) |
+|-------|--------|-----------|
+| 1.0 | 0.0 | **0.0** (한쪽만 좋아도 안됨) |
+| 0.0 | 1.0 | **0.0** |
+| 0.8 | 0.8 | **0.64** |
+| 1.0 | 1.0 | **1.0** (둘 다 좋아야 최대) |
+
+**다음 단계**: V5.9 학습 후 GRASP 도달률 확인

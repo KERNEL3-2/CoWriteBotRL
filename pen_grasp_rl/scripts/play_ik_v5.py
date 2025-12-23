@@ -116,7 +116,7 @@ def main():
 
     tilt_deg = CURRICULUM_TILT_MAX[args.level] * 180 / 3.14159
     print("=" * 70)
-    print("E0509 IK V5.4 테스트 시작 (Curriculum Learning + LIFT)")
+    print("E0509 IK V5.9 테스트 시작 (LIFT 제거 + Readiness 보상)")
     print("=" * 70)
     print(f"  Curriculum Level: {args.level} (펜 최대 기울기: {tilt_deg:.0f}°)")
     print(f"  환경 수: {args.num_envs}")
@@ -124,18 +124,16 @@ def main():
     print(f"  관찰 차원: {obs_dim}")
     print(f"  액션 차원: {action_dim} (Δx, Δy, Δz, Δroll, Δpitch, Δyaw)")
     print("=" * 70)
-    print("V5.4 핵심 변경사항:")
-    print("  - PHASE_LIFT 추가: 펜 5cm 들어올리기 → 성공")
-    print("  - 그리퍼 닫기 강화: 0.7 → 1.0")
-    print("  - 성공 조건: perp_dist<5mm, dot<-0.99")
+    print("V5.9 핵심 변경사항:")
+    print("  - LIFT 단계 제거 (4단계로 단순화)")
+    print("  - Readiness 보상 추가 (두 조건 동시 달성 유도)")
+    print("  - 성공 조건: GRASP + Good Grasp + 30스텝")
     print("=" * 70)
-    print("단계 (Phase) - 6단계:")
+    print("단계 (Phase) - 4단계:")
     print("  0: APPROACH - RL: 펜 축 방향에서 접근")
-    print("  1: ALIGN - RL: 대략적 자세 정렬")
-    print("  2: FINE_ALIGN - TCP: 정밀 자세 정렬 (dot → -0.98)")
-    print("  3: DESCEND - TCP: 펜 캡 방향 하강")
-    print("  4: GRASP - TCP: 그리퍼 닫기 (30스텝)")
-    print("  5: LIFT - TCP: 펜 들어올리기 5cm → 성공")
+    print("  1: ALIGN - RL: 자세 정렬 + 위치 조정")
+    print("  2: DESCEND - RL: 정밀 정렬 + 캡 접근")
+    print("  3: GRASP - RL: 그리퍼 닫기 → Good Grasp 시 성공")
     print("=" * 70)
 
     # 테스트 루프
@@ -181,8 +179,8 @@ def main():
 
             print(f"\nStep {step}: reward={mean_reward:.4f}, "
                   f"phases=[APP:{phase_stats['approach']}, ALN:{phase_stats['align']}, "
-                  f"FINE:{phase_stats['fine_align']}, DESC:{phase_stats['descend']}, "
-                  f"GRP:{phase_stats['grasp']}, LIFT:{phase_stats['lift']}], success={phase_stats['total_success']}")
+                  f"DESC:{phase_stats['descend']}, GRP:{phase_stats['grasp']}], "
+                  f"success={phase_stats['total_success']}")
             print(f"  → perp_dist={perp_dist.mean().item():.4f}m (need <0.008), "
                   f"axis_dist={axis_dist.mean().item():.4f}m")
             print(f"  → dist_cap={dist_to_cap.mean().item():.4f}m, "
@@ -199,9 +197,7 @@ def main():
     print(f"총 성공 횟수: {final_stats['total_success']}")
     print(f"최종 단계 분포:")
     print(f"  APPROACH={final_stats['approach']}, ALIGN={final_stats['align']}, "
-          f"FINE_ALIGN={final_stats['fine_align']}")
-    print(f"  DESCEND={final_stats['descend']}, GRASP={final_stats['grasp']}, "
-          f"LIFT={final_stats['lift']}")
+          f"DESCEND={final_stats['descend']}, GRASP={final_stats['grasp']}")
     print("=" * 70)
 
     env.close()
