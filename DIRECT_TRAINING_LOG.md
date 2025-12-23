@@ -1388,6 +1388,8 @@ python pen_grasp_rl/scripts/play_ik_v5.py --checkpoint /path/to/model.pt --level
 | 2024-12-23 | **IK V5.7**: 5단계로 간소화 (FINE_ALIGN 제거) | `9c8e149` |
 | 2024-12-23 | **IK V5.7 학습 (1K)**: DESCEND 94%, GRASP 0% (TCP 속도 문제) | - |
 | 2024-12-23 | **IK V5.8**: 전면 RL 제어 (TCP 하드코딩 제거) | `e8a5075` |
+| 2024-12-23 | **IK V5.9**: LIFT 제거 + Hybrid Readiness 보상 | - |
+| 2024-12-23 | **IK V6**: 3DoF 위치 제어 + 자동 자세 정렬 (핵심 설계 변경) | - |
 
 ---
 
@@ -1873,3 +1875,144 @@ rewards += 5.0 * transition_readiness
 | 1.0 | 1.0 | **1.0** (둘 다 좋아야 최대) |
 
 **다음 단계**: V5.9 학습 후 GRASP 도달률 확인
+
+---
+
+## IK V6 - 3DoF 위치 제어 + 자동 자세 정렬 (핵심 설계 변경)
+
+**날짜**: 2024-12-23
+
+### V5.x 시리즈의 근본적 한계
+
+V5.x의 문제점:
+- **DESCEND 96~97% 도달, GRASP 0%**
+- 전환 조건: `dist_to_cap < 2cm AND dot < -0.98` 동시 달성 불가
+- RL이 6DoF(위치+자세)를 동시에 학습해야 함 → 탐색 공간이 너무 넓음
+- Readiness 보상, Curriculum Learning 등 시도했지만 근본 해결 안됨
+
+### V6 핵심 아이디어
+
+**RL 부담 감소**: 자세는 자동 계산, RL은 위치만 학습
+
+```
+V5.9: RL이 6DoF 제어 (위치 + 자세 모두 학습)
+       → 자세 정렬 조건(dot < -0.98) 달성 실패
+
+V6:   RL이 3DoF 제어 (위치만 학습)
+       + 자세는 펜 축 기반 자동 계산 → IK가 처리
+       → 자세 정렬 보장, RL은 위치만 집중
+```
+
+### V6 vs V5.9 비교
+
+| 항목 | V5.9 | V6 |
+|------|------|-----|
+| **RL 액션** | 6DoF (Δx,Δy,Δz,Δr,Δp,Δyaw) | **3DoF (Δx,Δy,Δz)** |
+| **자세 제어** | RL이 학습 | **자동 계산 (펜 축 기반)** |
+| **단계 수** | 4단계 (APP→ALN→DESC→GRP) | **2단계 (APP→GRP)** |
+| **관찰 차원** | 36 | **24** |
+| **성공 조건** | perp_dist + dot + gripper | **perp_dist + gripper** |
+
+### 자동 자세 계산 (`_compute_auto_orientation`)
+
+그리퍼 Z축이 펜 Z축 반대 방향을 향하도록 자동 계산:
+
+```python
+def _compute_auto_orientation(self):
+    pen_z = self._get_pen_z_axis()
+    
+    # 그리퍼 Z축 = -펜 Z축 (펜을 위에서 잡음)
+    gripper_z = -pen_z
+    
+    # 그리퍼 X축: 월드 Z축과 그리퍼 Z축의 외적
+    world_z = [0, 0, 1]
+    gripper_x = cross(world_z, gripper_z)
+    
+    # 그리퍼 Y축: Z × X
+    gripper_y = cross(gripper_z, gripper_x)
+    
+    # 회전 행렬 → 쿼터니언 변환
+    rot_matrix = [gripper_x, gripper_y, gripper_z]
+    return quat_from_matrix(rot_matrix)
+```
+
+### 액션 적용 흐름
+
+```
+RL 출력: [Δx, Δy, Δz]  (3DoF)
+           ↓
+자동 자세 계산: target_quat = _compute_auto_orientation()
+           ↓
+자세 변화량 계산: rot_delta = target_quat × inv(current_quat)
+           ↓
+스케일링: rot_delta_scaled = rot_delta × 0.3  (30%씩 접근)
+           ↓
+IK 명령 조합: [Δx, Δy, Δz, Δrx, Δry, Δrz]  (6DoF)
+           ↓
+IK 컨트롤러: 관절 위치 계산
+```
+
+### 단계 단순화
+
+```
+V5.9 (4단계):
+  APPROACH → ALIGN → DESCEND → GRASP → 성공
+
+V6 (2단계):
+  APPROACH → GRASP → 성공
+```
+
+- **APPROACH**: 펜 캡 위치로 접근 (자세는 자동)
+- **GRASP**: 그리퍼 닫기 → Good Grasp + 30스텝 유지 → 성공
+
+### 성공 조건 변경
+
+```python
+# V5.9 Good Grasp 조건
+good_grasp = (
+    perp_dist < 0.015 AND       # 펜 축 거리
+    dot < -0.98 AND             # 자세 정렬 ← 문제!
+    gripper_amount ∈ [0.8, 1.05]  # 그리퍼 상태
+)
+
+# V6 Good Grasp 조건 (dot 제거!)
+good_grasp = (
+    perp_dist < 0.015 AND       # 펜 축 거리
+    gripper_amount ∈ [0.8, 1.05]  # 그리퍼 상태
+    # dot 조건 제거! (자세는 자동이므로)
+)
+```
+
+### 생성된 파일
+
+```
+pen_grasp_rl/
+├── envs/
+│   └── e0509_ik_env_v6.py     # V6 환경
+└── scripts/
+    ├── train_v6.py            # V6 학습 스크립트
+    └── play_v6.py             # V6 테스트 스크립트
+```
+
+### 학습 명령어
+
+```bash
+cd ~/IsaacLab
+source ~/isaacsim_env/bin/activate
+
+# Level 0 (펜 수직)
+python pen_grasp_rl/scripts/train_v6.py --headless --num_envs 4096 --level 0
+
+# Fixed LR (안정적)
+python pen_grasp_rl/scripts/train_v6.py --headless --num_envs 4096 --level 0 --fixed_lr
+```
+
+### 핵심 기대 효과
+
+1. **자세 정렬 보장**: 펜 축 기반 자동 계산 → dot 조건 자동 달성
+2. **탐색 공간 축소**: 6DoF → 3DoF → 학습 효율 향상
+3. **단계 단순화**: 4단계 → 2단계 → 전환 실패 가능성 감소
+4. **성공 조건 단순화**: dot 조건 제거 → 위치만 잘 맞추면 성공
+
+**다음 단계**: V6 Level 0 학습 진행
+
