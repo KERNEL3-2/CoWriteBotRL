@@ -1,19 +1,19 @@
 """
-E0509 IK 환경 V5.7 (Hybrid RL + TCP + LIFT + Good Grasp)
+E0509 IK 환경 V5.8 (전면 RL 제어)
 
-=== V5.7 변경사항 (V5.6 대비) ===
-1. 5단계로 간소화 (FINE_ALIGN 제거):
-   - FINE_ALIGN 단계를 DESCEND에 통합
-   - DESCEND에서 정밀 정렬 + 캡 접근을 동시 수행
+=== V5.8 변경사항 (V5.7 대비) ===
+1. 전면 RL 제어:
+   - 모든 단계에서 RL 정책 사용 (TCP 하드코딩 제거)
+   - 그리퍼만 단계별 open/close (GRASP/LIFT에서 닫기)
 
-2. DESCEND 단계 개선:
-   - perpendicular_dist → distance_to_cap 기반 보상
-   - 정밀 정렬에 exponential 보너스 추가 (dot > -0.95)
-   - 캡 접근 진행 보상 추가
+2. 코드 단순화:
+   - _compute_tcp_actions() 함수 제거
+   - tcp_active 관찰값 제거 (37 → 36차원)
+   - Value function 학습 용이 (RL→TCP 전환 불연속 제거)
 
-3. 전환 조건 조정:
-   - ALIGN → DESCEND: dot < -0.85, perp_dist < 4cm
-   - DESCEND → GRASP: dist_cap < 2cm, dot < -0.98
+3. GRASP/LIFT 보상 추가:
+   - GRASP: 위치 유지 보상 추가
+   - LIFT: 높이 상승 보상 추가
 
 === Curriculum Levels ===
 Level 0: 펜 수직 (tilt_max = 0°)     - 기본 동작 학습
@@ -21,12 +21,12 @@ Level 1: 펜 10° 기울기               - 약간의 변형 적응
 Level 2: 펜 20° 기울기               - 중간 난이도
 Level 3: 펜 30° 기울기               - 최종 목표
 
-=== 단계 (Phase) - 5단계 ===
-0. APPROACH: 펜 축 방향에서 접근 + 자세 정렬 시작 (RL)
-1. ALIGN: 위치 미세조정 + 자세 정렬 완료 (RL)
-2. DESCEND: 정밀 정렬 + 펜 캡 접근 (TCP)
-3. GRASP: 그리퍼 닫기 (Good Grasp + 30스텝) (TCP)
-4. LIFT: 펜 들어올리기 5cm → 성공 종료 (TCP)
+=== 단계 (Phase) - 5단계 (전부 RL 제어) ===
+0. APPROACH: 펜 축 방향에서 접근 + 자세 정렬 시작
+1. ALIGN: 위치 미세조정 + 자세 정렬 완료
+2. DESCEND: 정밀 정렬 + 펜 캡 접근
+3. GRASP: 위치 유지 + 그리퍼 닫기 (Good Grasp + 30스텝)
+4. LIFT: 펜 들어올리기 5cm → 성공 종료
 """
 from __future__ import annotations
 
@@ -79,17 +79,11 @@ DESCEND_TO_GRASP_DOT = -0.98            # V5.7: 정밀 정렬
 
 # 성공 조건
 SUCCESS_DIST = 0.005    # 5mm (거의 일치)
-SUCCESS_DOT = -0.98     # V5.7: DESCEND 조건과 동일
+SUCCESS_DOT = -0.98     # DESCEND 조건과 동일
 
-# TCP 제어 설정 (V5.7)
-TCP_ROTATION_SPEED = 0.03  # rad/step (V5.7: FINE_ALIGN → TCP)
-DESCEND_SPEED = 0.002             # m/step
-DESCEND_POSE_CORRECTION_GAIN = 1.5  # 자세 보정 강화
-
-# GRASP/LIFT 설정 (V5.4)
-GRIPPER_CLOSE_TARGET = 1.1        # 그리퍼 닫기 목표 (확실히 닫으려고 시도)
+# GRASP/LIFT 설정
+GRIPPER_CLOSE_TARGET = 1.1        # 그리퍼 닫기 목표
 LIFT_HEIGHT = 0.05                # 들어올리기 높이 5cm
-LIFT_SPEED = 0.003                # 들어올리기 속도
 
 # Good Grasp 조건 (V5.4)
 # 펜 두께 16-17mm → 그리퍼가 완전히 안 닫히고 펜에 걸린 상태
@@ -121,7 +115,7 @@ class E0509IKEnvV5Cfg(DirectRLEnvCfg):
     episode_length_s = 15.0
     action_scale = 0.02
     action_space = 6      # [Δx, Δy, Δz, Δroll, Δpitch, Δyaw]
-    observation_space = 37  # 기존 36 + tcp_active(1)
+    observation_space = 36  # V5.8: tcp_active 제거
     state_space = 0
 
     # Curriculum Learning 설정
@@ -365,24 +359,13 @@ class E0509IKEnvV5(DirectRLEnv):
         self.actions = actions.clone()
 
     def _apply_action(self) -> None:
-        """액션 적용 (Hybrid: RL + TCP 제어)"""
+        """액션 적용 (V5.8: 전면 RL 제어)"""
         ee_pos_curr, ee_quat_curr = self._compute_ee_pose()
 
-        # RL 단계 (APPROACH, ALIGN)
-        rl_mask = (self.phase == PHASE_APPROACH) | (self.phase == PHASE_ALIGN)
-
-        # TCP 제어 단계 (DESCEND, GRASP, LIFT) - V5.7
-        tcp_mask = ~rl_mask
-
         # ============================================================
-        # RL 단계: 학습된 정책 사용
+        # 모든 단계에서 RL 정책 사용 (V5.8)
         # ============================================================
         scaled_actions = self.actions * self.action_scale
-
-        # TCP 단계에서는 deterministic 액션 사용
-        if tcp_mask.any():
-            tcp_actions = self._compute_tcp_actions(ee_pos_curr, ee_quat_curr)
-            scaled_actions[tcp_mask] = tcp_actions[tcp_mask]
 
         self._ik_controller.set_command(scaled_actions, ee_pos_curr, ee_quat_curr)
 
@@ -399,13 +382,13 @@ class E0509IKEnvV5(DirectRLEnv):
             self.robot_dof_upper_limits,
         )
 
-        # 그리퍼 제어
+        # 그리퍼 제어 (단계별 open/close)
         gripper_target = torch.zeros(self.num_envs, 4, device=self.device)
 
-        # GRASP/LIFT 단계에서 그리퍼 닫기 (V5.4: 1.0으로 강화)
+        # GRASP/LIFT 단계에서 그리퍼 닫기
         grasp_or_lift_mask = (self.phase == PHASE_GRASP) | (self.phase == PHASE_LIFT)
         if grasp_or_lift_mask.any():
-            gripper_target[grasp_or_lift_mask] = GRIPPER_CLOSE_TARGET  # V5.4: 0.7 → 1.0
+            gripper_target[grasp_or_lift_mask] = GRIPPER_CLOSE_TARGET
             self.gripper_closed[grasp_or_lift_mask] = True
 
         full_target = torch.zeros(self.num_envs, 10, device=self.device)
@@ -413,90 +396,6 @@ class E0509IKEnvV5(DirectRLEnv):
         full_target[:, 6:] = gripper_target
 
         self.robot.set_joint_position_target(full_target)
-
-    def _compute_tcp_actions(self, ee_pos: torch.Tensor, ee_quat: torch.Tensor) -> torch.Tensor:
-        """TCP 제어 액션 계산 (V5.7: DESCEND, GRASP, LIFT)"""
-        tcp_actions = torch.zeros(self.num_envs, 6, device=self.device)
-
-        pen_z = self._get_pen_z_axis()
-        gripper_z = self._get_gripper_z_axis()
-        cap_pos = self._get_pen_cap_pos()
-        grasp_pos = self._get_grasp_point()
-
-        # ============================================================
-        # DESCEND: 펜 캡 방향으로 이동 + 정밀 Z축 정렬 (V5.7: 통합)
-        # ============================================================
-        descend_mask = (self.phase == PHASE_DESCEND)
-        if descend_mask.any():
-            # V5.1 수정: 펜 캡 방향으로 이동 (월드 Z축이 아닌!)
-            # 문제: 그리퍼가 펜 캡 "위"가 아닌 "옆"에 있을 때 월드 Z축으로 내려가면 펜에 가까워지지 않음
-            # 해결: 항상 펜 캡 방향으로 이동
-            to_cap = cap_pos[descend_mask] - grasp_pos[descend_mask]
-            to_cap_dist = torch.norm(to_cap, dim=-1, keepdim=True) + 1e-6
-            to_cap_normalized = to_cap / to_cap_dist
-            tcp_actions[descend_mask, :3] = to_cap_normalized * DESCEND_SPEED
-
-            # Z축 정렬 유지 (자세 보정)
-            target_z = -pen_z[descend_mask]
-            current_z = gripper_z[descend_mask]
-            rotation_axis = torch.cross(current_z, target_z, dim=-1)
-            rotation_axis_norm = torch.norm(rotation_axis, dim=-1, keepdim=True) + 1e-6
-            rotation_axis = rotation_axis / rotation_axis_norm
-            dot = torch.sum(current_z * target_z, dim=-1, keepdim=True)
-            angle = torch.acos(torch.clamp(dot, -1.0, 1.0))
-            # 자세 보정 속도 (DESCEND_POSE_CORRECTION_GAIN)
-            rotation_delta = torch.clamp(angle, max=TCP_ROTATION_SPEED * DESCEND_POSE_CORRECTION_GAIN)
-            tcp_actions[descend_mask, 3:] = (rotation_axis * rotation_delta).squeeze(-1) if (rotation_axis * rotation_delta).dim() > 2 else rotation_axis * rotation_delta
-
-        # ============================================================
-        # GRASP: 위치 고정
-        # ============================================================
-        grasp_mask = (self.phase == PHASE_GRASP)
-        if grasp_mask.any():
-            tcp_actions[grasp_mask] = 0.0  # 위치/자세 고정
-            self.grasp_step_count[grasp_mask] += 1  # V5.4: GRASP 스텝 카운트
-
-        # ============================================================
-        # LIFT: 펜 들어올리기 (V5.4)
-        # ============================================================
-        lift_mask = (self.phase == PHASE_LIFT)
-        if lift_mask.any():
-            # 월드 Z축 방향으로 상승
-            lift_direction = torch.zeros(lift_mask.sum(), 3, device=self.device)
-            lift_direction[:, 2] = 1.0  # 월드 Z축 상승
-
-            # 현재 높이 계산
-            current_pos = grasp_pos[lift_mask]
-            start_pos = self.lift_start_pos[lift_mask]
-            current_lift_height = current_pos[:, 2] - start_pos[:, 2]
-
-            # 목표 높이까지 상승
-            remaining_height = LIFT_HEIGHT - current_lift_height
-            still_lifting = remaining_height > 0.001  # 1mm 이상 남음
-
-            # 상승 명령
-            tcp_actions[lift_mask, :3] = lift_direction * LIFT_SPEED
-
-            # LIFT 완료 체크
-            lift_complete_now = ~still_lifting
-            if lift_complete_now.any():
-                lift_indices = torch.where(lift_mask)[0]
-                complete_indices = lift_indices[lift_complete_now]
-                self.lift_complete[complete_indices] = True
-                tcp_actions[complete_indices] = 0.0  # 완료 후 정지
-
-            # 자세 유지 (펜 축 정렬)
-            target_z = -pen_z[lift_mask]
-            current_z = gripper_z[lift_mask]
-            rotation_axis = torch.cross(current_z, target_z, dim=-1)
-            rotation_axis_norm = torch.norm(rotation_axis, dim=-1, keepdim=True) + 1e-6
-            rotation_axis = rotation_axis / rotation_axis_norm
-            dot = torch.sum(current_z * target_z, dim=-1, keepdim=True)
-            angle = torch.acos(torch.clamp(dot, -1.0, 1.0))
-            rotation_delta = torch.clamp(angle, max=TCP_ROTATION_SPEED)
-            tcp_actions[lift_mask, 3:] = (rotation_axis * rotation_delta).squeeze(-1) if (rotation_axis * rotation_delta).dim() > 2 else rotation_axis * rotation_delta
-
-        return tcp_actions
 
     def _compute_ee_pose(self) -> tuple[torch.Tensor, torch.Tensor]:
         """End-effector pose 계산"""
@@ -601,11 +500,8 @@ class E0509IKEnvV5(DirectRLEnv):
 
         perpendicular_dist, axis_distance, _ = self._compute_axis_metrics()
 
-        # 현재 단계 (정규화)
-        phase_normalized = self.phase.float() / 4.0  # V5.7: 5단계 (0~4)
-
-        # TCP 제어 활성화 여부
-        tcp_active = ((self.phase >= PHASE_DESCEND) & (self.phase <= PHASE_LIFT)).float()  # V5.7: DESCEND~LIFT
+        # 현재 단계 (정규화) - V5.8: 5단계 (0~4)
+        phase_normalized = self.phase.float() / 4.0
 
         obs = torch.cat([
             joint_pos,                           # 6
@@ -620,8 +516,7 @@ class E0509IKEnvV5(DirectRLEnv):
             perpendicular_dist.unsqueeze(-1),   # 1
             axis_distance.unsqueeze(-1),         # 1
             phase_normalized.unsqueeze(-1),      # 1
-            tcp_active.unsqueeze(-1),            # 1 (V4 추가)
-        ], dim=-1)  # 총 37
+        ], dim=-1)  # 총 36 (V5.8: tcp_active 제거)
 
         return {"policy": obs}
 
@@ -727,11 +622,14 @@ class E0509IKEnvV5(DirectRLEnv):
             rewards[descend_mask] += 10.0 * torch.clamp(descend_progress * 100, min=0, max=1)
 
         # =========================================================
-        # GRASP 단계 (TCP) - 이전 phase 보상 유지 + 그립 보상 + exponential
+        # GRASP 단계 (V5.8: RL 제어) - 위치 유지 + 그립 보상
         # =========================================================
         grasp_mask = (self.phase == PHASE_GRASP)
         if grasp_mask.any():
-            # 이전 phase 보상 유지: 정렬 유지 (선형)
+            # V5.8: GRASP 스텝 카운트 (TCP에서 이동)
+            self.grasp_step_count[grasp_mask] += 1
+
+            # 정렬 유지 보상
             align_progress = -dot_product[grasp_mask]
             rewards[grasp_mask] += self.cfg.rew_scale_descend_align * align_progress
 
@@ -743,7 +641,10 @@ class E0509IKEnvV5(DirectRLEnv):
             )
             rewards[grasp_mask] += 2.0 * fine_exponential
 
-            # 추가: 그립 보상
+            # 위치 유지 보상 (V5.8: RL이 위치 고정하도록 유도)
+            rewards[grasp_mask] += 5.0 * torch.exp(-distance_to_cap[grasp_mask] * 50.0)
+
+            # 그립 보상
             gripper_pos = self.robot.data.joint_pos[:, self._gripper_joint_ids]
             gripper_closed_amount = gripper_pos.mean(dim=-1)
             rewards[grasp_mask] += self.cfg.rew_scale_grasp_close * gripper_closed_amount[grasp_mask]
@@ -807,9 +708,30 @@ class E0509IKEnvV5(DirectRLEnv):
             self.lift_start_pos[transition_to_lift] = grasp_pos[transition_to_lift]
 
         # =========================================================
-        # 성공 보상 (V5.4: LIFT 완료 + Good Grasp 유지)
+        # LIFT 단계 (V5.8: RL 제어) - 펜 들어올리기
         # =========================================================
         lift_mask = (self.phase == PHASE_LIFT)
+        if lift_mask.any():
+            # 현재 높이 계산
+            current_height = grasp_pos[lift_mask, 2] - self.lift_start_pos[lift_mask, 2]
+
+            # 상승 보상 (높이에 비례)
+            rewards[lift_mask] += 10.0 * torch.clamp(current_height / LIFT_HEIGHT, max=1.0)
+
+            # 정렬 유지 보상
+            align_progress = -dot_product[lift_mask]
+            rewards[lift_mask] += self.cfg.rew_scale_descend_align * align_progress
+
+            # LIFT 완료 체크 (V5.8: TCP에서 이동)
+            lift_complete_now = current_height >= LIFT_HEIGHT - 0.001  # 0.1mm 오차 허용
+            lift_indices = torch.where(lift_mask)[0]
+            for i, idx in enumerate(lift_indices):
+                if lift_complete_now[i]:
+                    self.lift_complete[idx] = True
+
+        # =========================================================
+        # 성공 보상 (V5.8: LIFT 완료 + Good Grasp 유지)
+        # =========================================================
         success = lift_mask & self.lift_complete & good_grasp
         rewards[success] += self.cfg.rew_scale_success
         self.success_count[success] += 1
@@ -822,9 +744,8 @@ class E0509IKEnvV5(DirectRLEnv):
         if collision_penalty_mask.any():
             rewards[collision_penalty_mask] += self.cfg.rew_scale_collision
 
-        # 액션 페널티 (RL 단계만)
-        rl_mask = (self.phase == PHASE_APPROACH) | (self.phase == PHASE_ALIGN)
-        rewards[rl_mask] += self.cfg.rew_scale_action * torch.sum(torch.square(self.actions[rl_mask]), dim=-1)
+        # 액션 페널티 (V5.8: 모든 단계)
+        rewards += self.cfg.rew_scale_action * torch.sum(torch.square(self.actions), dim=-1)
 
         # =========================================================
         # 이전 거리 업데이트
