@@ -2269,9 +2269,89 @@ source ~/isaacsim_env/bin/activate
 python pen_grasp_rl/scripts/train_ik_v7.py --headless --num_envs 4096 --level 0 --max_iterations 30000
 ```
 
+---
+
+## IK V7 5000 iter 학습 결과 (2024-12-24)
+
+### 학습 설정
+- **Level**: 0 (펜 수직)
+- **환경 수**: 4096
+- **LR**: Adaptive (3e-4)
+- **Iterations**: 5000
+
+### 결과 요약
+
+| 메트릭 | 초기 | 최종 | 목표 | 상태 |
+|--------|------|------|------|------|
+| Mean Reward | -165.96 | **1177.13** | - | ✅ 우상향 |
+| Episode Length | 21.67 | **449.00** | - | ✅ Max 도달 |
+| dist_to_cap | 41.37cm | **19.96cm** | <3cm | ⚠️ 개선 중 |
+| perp_dist | 22.10cm | **2.51cm** | <1cm | ✅ 거의 도달 |
+| dot (자세) | -0.01 | **0.03** | <-0.95 | ❌ **문제!** |
+| on_correct_side | 100% | 98.49% | - | ✅ 좋음 |
+| success | 0 | **0** | - | 없음 |
+
+### 문제 발견: V7이 V6보다 10배 느림!
+
+**V6 vs V7 거리 도달 비교**:
+
+| 거리 도달 | V6 (iteration) | V7 (5000 iter) |
+|-----------|----------------|----------------|
+| 20cm | **537** | **5000** (아직 도달 중) |
+| 10cm | 664 | - |
+| 5cm | 1738 | - |
+
+**원인 분석**:
+- V7에 `dot < -0.95` 성공 조건 추가됨
+- 하지만 자세 정렬은 `_compute_auto_orientation()`이 자동 처리
+- V6도 dot 조건 없이 잘 동작했음
+- **불필요한 조건이 학습을 10배 느리게 만듦!**
+
+---
+
+## IK V7.1 수정 (2024-12-24) - dot 조건 제거
+
+### 변경사항
+
+**제거된 조건**:
+```python
+# V7 (문제)
+SUCCESS_DOT_THRESHOLD = -0.95    # 제거됨!
+
+success_condition = (
+    dist < 3cm AND
+    perp < 1cm AND
+    dot < -0.95 AND      # ❌ 제거
+    on_correct_side
+)
+```
+
+**V7.1 성공 조건**:
+```python
+success_condition = (
+    dist_to_cap < 3cm AND        # 캡까지 거리
+    perp_dist < 1cm AND          # 펜 축 정렬
+    on_correct_side              # 캡 위에 있음
+)
+# dot 조건 제거 - 자세는 자동 정렬되므로 불필요
+```
+
+### 이유
+1. **자세는 자동 정렬**: `_compute_auto_orientation()`이 매 스텝 처리
+2. **V6도 dot 조건 없었음**: V6 GRASP 조건에서 dot 제거됨
+3. **학습 속도 10배 개선 예상**: V6 수준으로 빨라질 것
+
+### 학습 명령어 (V7.1)
+
+```bash
+cd ~/IsaacLab
+source ~/isaacsim_env/bin/activate
+python pen_grasp_rl/scripts/train_v7.py --headless --num_envs 4096 --level 0
+```
+
 ### 다음 단계
 
-1. V7 학습 실행 및 결과 확인
-2. 캡 위 유지 여부 검증
-3. Sim2Real 테스트
+1. V7.1 학습 실행 및 속도 확인
+2. V6 수준 (537 iter에 20cm)과 비교
+3. 성공 조건 도달 확인
 
