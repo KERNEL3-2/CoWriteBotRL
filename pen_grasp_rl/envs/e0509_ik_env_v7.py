@@ -5,18 +5,18 @@ E0509 IK 환경 V7 (APPROACH Only - Sim2Real Ready)
 - RL: 위치(x, y, z)만 제어 → 3DoF
 - 자세: 펜 축 기반 자동 계산 → IK가 처리
 - GRASP 제거: 실제 로봇에서 별도 처리 (Sim2Real Gap 회피)
-- 성공 조건: 캡 위 적절한 위치 + 자세 정렬
+- 성공 조건: 캡 위 적절한 위치 (자세는 자동 정렬)
 
 === V6 대비 변경사항 ===
 1. GRASP 단계 제거 (APPROACH만)
-2. 성공 조건: 캡 위 위치 도달 + 자세 정렬 완료
+2. 성공 조건: 캡 위 위치 도달 (자세는 자동)
 3. 그리퍼 제어 제거 (항상 열린 상태)
 4. Sim2Real에 최적화
 
 === 성공 조건 ===
 - 캡까지 거리 < 3cm
 - 펜 축 정렬 (perp_dist < 1cm)
-- 그리퍼-펜 자세 정렬 (dot < -0.95)
+- 캡 위에 있음 (on_correct_side)
 - 30 스텝 유지
 
 === Curriculum Levels ===
@@ -62,8 +62,8 @@ PHASE_APPROACH = 0    # RL: 펜 캡 위치로 접근 (자세는 자동)
 # V7 성공 조건 (GRASP 없이 위치+자세로만 판단)
 SUCCESS_DIST_TO_CAP = 0.03       # 캡까지 거리 < 3cm
 SUCCESS_PERP_DIST = 0.01         # 펜 축에서 벗어난 거리 < 1cm
-SUCCESS_DOT_THRESHOLD = -0.95    # 그리퍼-펜 자세 정렬 (dot < -0.95)
 SUCCESS_HOLD_STEPS = 30          # 30 스텝 유지하면 성공
+# V7.1: dot 조건 제거 (자세는 자동 정렬되므로 불필요)
 
 # Curriculum Learning 레벨별 펜 기울기 (라디안)
 CURRICULUM_TILT_MAX = {
@@ -572,7 +572,6 @@ class E0509IKEnvV7(DirectRLEnv):
         near_success = (
             (distance_to_cap < SUCCESS_DIST_TO_CAP * 2) &  # 6cm 이내
             (perpendicular_dist < SUCCESS_PERP_DIST * 2) &  # 2cm 이내
-            (dot < SUCCESS_DOT_THRESHOLD + 0.1) &  # dot < -0.85
             on_correct_side  # 캡 위에 있음
         )
         rewards[near_success] += self.cfg.rew_scale_ready_bonus * 0.5
@@ -583,9 +582,9 @@ class E0509IKEnvV7(DirectRLEnv):
         success_condition = (
             (distance_to_cap < SUCCESS_DIST_TO_CAP) &      # 캡까지 3cm 이내
             (perpendicular_dist < SUCCESS_PERP_DIST) &     # 펜 축에서 1cm 이내
-            (dot < SUCCESS_DOT_THRESHOLD) &                # 자세 정렬 (dot < -0.95)
             on_correct_side                                 # 캡 위에 있음 (지나치지 않음)
         )
+        # V7.1: dot 조건 제거 - 자세는 자동 정렬되므로
 
         # 성공 조건 유지 카운트
         self.success_hold_count[success_condition] += 1

@@ -49,7 +49,6 @@ from envs.e0509_ik_env_v7 import (
     PHASE_APPROACH,
     SUCCESS_DIST_TO_CAP,
     SUCCESS_PERP_DIST,
-    SUCCESS_DOT_THRESHOLD,
     SUCCESS_HOLD_STEPS,
 )
 
@@ -125,7 +124,7 @@ def main():
     print("V7 핵심 특징:")
     print("  - 3DoF 위치 제어 (자세는 펜 축 기반 자동 정렬)")
     print("  - APPROACH만 (GRASP 제거)")
-    print(f"  - 성공 조건: dist < {SUCCESS_DIST_TO_CAP*100:.0f}cm, perp < {SUCCESS_PERP_DIST*100:.0f}cm, dot < {SUCCESS_DOT_THRESHOLD}, 캡 위")
+    print(f"  - 성공 조건: dist < {SUCCESS_DIST_TO_CAP*100:.0f}cm, perp < {SUCCESS_PERP_DIST*100:.0f}cm, 캡 위")
     print("=" * 70)
 
     # 테스트 루프
@@ -160,11 +159,10 @@ def main():
             # 캡 위/아래 판단
             correct_side_pct = on_correct_side.float().mean().item() * 100
 
-            # 성공 조건 체크
+            # 성공 조건 체크 (V7.1: dot 조건 제거)
             success_condition = (
                 (dist_to_cap < SUCCESS_DIST_TO_CAP) &
                 (perp_dist < SUCCESS_PERP_DIST) &
-                (dot < SUCCESS_DOT_THRESHOLD) &
                 on_correct_side
             )
             success_pct = success_condition.float().mean().item() * 100
@@ -175,7 +173,7 @@ def main():
             print(f"  perp_dist={perp_dist.mean().item()*100:.2f}cm (need <{SUCCESS_PERP_DIST*100:.0f}cm)")
             print(f"  axis_dist={axis_dist.mean().item()*100:.2f}cm (음수=캡위)")
             print(f"  캡 위에 있는 비율: {correct_side_pct:.0f}%")
-            print(f"  dot(정렬)={dot.mean().item():.4f} (need <{SUCCESS_DOT_THRESHOLD})")
+            print(f"  dot(정렬)={dot.mean().item():.4f} (참고용, 자동정렬)")
             print(f"  성공 조건 충족: {success_pct:.1f}%")
 
     # 최종 결과
