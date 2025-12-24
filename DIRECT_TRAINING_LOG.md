@@ -2150,3 +2150,128 @@ python pen_grasp_rl/scripts/train_v6.py --headless --num_envs 4096 --level 0 --f
 
 **다음 단계**: V6.2 학습 후 거리 수렴 속도 및 안정성 확인
 
+
+---
+
+## IK V6 30,000 스텝 학습 결과 (2024-12-24)
+
+### 학습 환경
+- **환경**: E0509IKEnvV6 (3DoF 위치 제어 + 자동 자세 정렬)
+- **레벨**: Level 0 (펜 수직)
+- **스텝**: 30,000 iterations
+- **환경 수**: 4096
+
+### 학습 결과
+
+**학습 그래프**:
+
+![IK V6 30k Training](images/ikv6_training_30k.png)
+
+| 지표 | 시작 | 최종 | 최고 |
+|------|------|------|------|
+| Mean Reward | -563.78 | **4189.75** | 4321.41 |
+| Episode Length | 69.44 | **449.00** | 449.00 |
+| Distance to Cap | ~40cm | **4.68cm** | - |
+| Perp Distance | ~13cm | **0.26cm** | - |
+| Approach Ratio | 0% | **100%** | - |
+| Grasp Ratio | 0% | **0%** | - |
+
+### Play 테스트 결과
+
+**테스트 GIF**:
+
+![IK V6 Play](images/great_ikv6.gif)
+
+**Play 로그 분석**:
+```
+Step 300: dist_to_cap=0.86cm, perp_dist=0.51cm, axis_dist=0.63cm
+         캡 위에 있는 비율: 0% ← 캡을 지나침!
+         dot(정렬)=-0.9624
+         총 성공: 1348회
+```
+
+### 문제점 발견
+
+1. **캡을 지나치는 문제**: 
+   - 학습 시 dist_to_cap이 4.68cm에서 정체
+   - Play 시 로봇이 펜 캡을 지나쳐서 그리퍼 안쪽으로 파고듦
+   - axis_dist가 양수(캡 아래)가 되는 경우 발생
+
+2. **자세 정렬과 위치 이동 간섭**:
+   - IK가 위치와 자세를 동시에 처리
+   - 자세 정렬하면서 grasp point 위치가 변함
+   - 결과적으로 캡에 정확히 도달하지 못함
+
+3. **GRASP 단계 미진입**:
+   - 학습 로그에서 Grasp Ratio 0%
+   - Play에서는 조건이 느슨해서 성공 (noise 없음)
+
+---
+
+## IK V7 환경 (2024-12-24) - APPROACH Only
+
+### V7 핵심 변경사항
+
+V6의 문제점을 해결하고 Sim2Real에 최적화:
+
+| 항목 | V6 | V7 |
+|------|----|----|
+| 단계 | APPROACH → GRASP | **APPROACH만** |
+| 성공 조건 | Good Grasp + 30스텝 | **위치 + 자세 + 캡 위 + 30스텝** |
+| 그리퍼 | GRASP에서 닫기 | **항상 열림** |
+| 목적 | 시뮬레이션 완결 | **Sim2Real Ready** |
+
+### V7 성공 조건
+
+```python
+SUCCESS_DIST_TO_CAP = 0.03       # 캡까지 거리 < 3cm
+SUCCESS_PERP_DIST = 0.01         # 펜 축에서 거리 < 1cm
+SUCCESS_DOT_THRESHOLD = -0.95    # 자세 정렬 (dot < -0.95)
+on_correct_side = True           # 캡 위에 있음 (지나치지 않음!)
+SUCCESS_HOLD_STEPS = 30          # 30 스텝 유지
+```
+
+### V7 보상 구조
+
+```python
+# APPROACH (유일한 단계)
+rewards += -15.0 * dist_to_cap                      # 거리 페널티
+rewards += 10.0 * torch.exp(-dist_to_cap * 15.0)    # 거리 지수 보상
+rewards += -8.0 * perp_dist                         # 펜축 페널티
+rewards += 5.0 * torch.exp(-perp_dist * 50.0)       # 펜축 지수 보상
+rewards += rew_scale_alignment * alignment_reward    # 자세 정렬 보상
+rewards += above_cap_bonus                          # 캡 위 보너스
+rewards[passed_cap] -= 1.0                          # 캡 지나침 페널티!
+
+# 성공
+rewards[success] += 100.0
+```
+
+### V7 설계 의도
+
+1. **Sim2Real Gap 회피**: 
+   - GRASP은 시뮬레이션과 현실이 많이 다름
+   - 실제 로봇에서는 OSC/힘제어로 별도 처리
+
+2. **캡 위 유지 강제**:
+   - `on_correct_side` 조건 추가
+   - 캡을 지나치면 성공 불가 + 페널티
+
+3. **안정적인 접근 학습**:
+   - GRASP 없이 위치+자세만 학습
+   - 더 명확한 목표
+
+### 학습 명령어
+
+```bash
+cd ~/IsaacLab
+source ~/isaacsim_env/bin/activate
+python pen_grasp_rl/scripts/train_ik_v7.py --headless --num_envs 4096 --level 0 --max_iterations 30000
+```
+
+### 다음 단계
+
+1. V7 학습 실행 및 결과 확인
+2. 캡 위 유지 여부 검증
+3. Sim2Real 테스트
+
