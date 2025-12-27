@@ -129,9 +129,26 @@ def main():
         if step % 100 == 0:
             stats = env.get_phase_stats()
             mean_reward = rewards.mean().item()
+
+            # 디버깅: 거리 정보 출력
+            grasp_pos = env._get_grasp_point()
+            pregrasp_pos = env._get_pregrasp_pos()
+            cap_pos = env._get_pen_cap_pos()
+
+            dist_to_pregrasp = torch.norm(grasp_pos - pregrasp_pos, dim=-1)
+            dist_to_cap = torch.norm(grasp_pos - cap_pos, dim=-1)
+
+            # 정렬 정보
+            gripper_z = env._get_gripper_z_axis()
+            pen_z = env._get_pen_z_axis()
+            dot_product = torch.sum(gripper_z * pen_z, dim=-1)
+
             print(f"Step {step}: reward={mean_reward:.4f}, "
                   f"phases=[PRE:{stats['pre_grasp']}, ALN:{stats['align']}, DESC:{stats['descend']}], "
                   f"success={stats['total_success']}")
+            print(f"  → dist_pregrasp={dist_to_pregrasp.mean():.4f}m (need <0.03), "
+                  f"dist_cap={dist_to_cap.mean():.4f}m, "
+                  f"dot={dot_product.mean():.4f} (need <-0.95)")
 
     # =============================================================================
     # 최종 통계

@@ -760,12 +760,34 @@ class E0509IKEnvV5(DirectRLEnv):
         self.extras["log"]["Phase/grasp_ratio"] = phase_stats['grasp'] / total_envs
         self.extras["log"]["Phase/total_success"] = float(phase_stats['total_success'])
 
-        # 콘솔 출력 (N step마다) - V5.9: 4단계
+        # V5.9: DESCEND 단계 메트릭 로깅 (dist_to_cap, dot)
+        descend_mask_log = (self.phase == PHASE_DESCEND)
+        if descend_mask_log.any():
+            self.extras["log"]["Descend/dist_to_cap_mean"] = distance_to_cap[descend_mask_log].mean().item()
+            self.extras["log"]["Descend/dist_to_cap_min"] = distance_to_cap[descend_mask_log].min().item()
+            self.extras["log"]["Descend/dot_mean"] = dot_product[descend_mask_log].mean().item()
+            self.extras["log"]["Descend/dot_min"] = dot_product[descend_mask_log].min().item()
+            # 전환 조건 달성률
+            near_cap = (distance_to_cap[descend_mask_log] < DESCEND_TO_GRASP_DIST).float().mean().item()
+            good_dot = (dot_product[descend_mask_log] < DESCEND_TO_GRASP_DOT).float().mean().item()
+            both_ok = ((distance_to_cap[descend_mask_log] < DESCEND_TO_GRASP_DIST) &
+                       (dot_product[descend_mask_log] < DESCEND_TO_GRASP_DOT)).float().mean().item()
+            self.extras["log"]["Descend/near_cap_ratio"] = near_cap
+            self.extras["log"]["Descend/good_dot_ratio"] = good_dot
+            self.extras["log"]["Descend/both_ok_ratio"] = both_ok
+
+        # 콘솔 출력 (N step마다) - V5.9: 4단계 + 메트릭
         if self._global_step % self._phase_print_interval == 0:
             print(f"  [Step {self._global_step}] Phase: "
                   f"APP:{phase_stats['approach']} ALN:{phase_stats['align']} "
                   f"DESC:{phase_stats['descend']} GRP:{phase_stats['grasp']} "
                   f"| Success:{phase_stats['total_success']}", flush=True)
+            # DESCEND 메트릭 출력
+            if descend_mask_log.any():
+                print(f"    → DESCEND: dist_cap={distance_to_cap[descend_mask_log].mean().item():.4f}m "
+                      f"(min:{distance_to_cap[descend_mask_log].min().item():.4f}), "
+                      f"dot={dot_product[descend_mask_log].mean().item():.4f} "
+                      f"(min:{dot_product[descend_mask_log].min().item():.4f})", flush=True)
 
         return rewards
 

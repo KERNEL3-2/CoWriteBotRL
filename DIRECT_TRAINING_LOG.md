@@ -11,7 +11,7 @@
 
 ## 상태 머신 버전 이력
 
-### V3 (2024-12-18) - 현재 (Pre-grasp 방식)
+### V3 (2025-12-18) - 현재 (Pre-grasp 방식)
 ```
 PRE_GRASP (펜캡 위 7cm + 정렬)
     ↓ 거리 < 3cm & dot < -0.95
@@ -26,7 +26,7 @@ SUCCESS!
 - 특이점 회피 페널티 (joint 3, 5)
 - 더 엄격한 정렬 조건 (dot < -0.95 = 약 18도 이내)
 
-### V2 (2024-12-17) - Deprecated
+### V2 (2025-12-17) - Deprecated
 ```
 ALIGN (정렬) ← 먼저 정렬!
     ↓ dot < -0.8
@@ -114,7 +114,7 @@ exponential_bonus = exp((−dot − 0.9) × 10)
 | 액션 페널티 | -0.01 | action^2 * scale |
 | 반대 방향 페널티 | -2.0 | dot > 0일 때 |
 
-> **밸런스 조정 (2024-12-18)**: 정렬 보상이 거리/진행 보상보다 30~144배 컸던 문제 수정. 거리/진행 보상 강화, 지수적 정렬 보상 축소하여 약 1:1 비율로 조정.
+> **밸런스 조정 (2025-12-18)**: 정렬 보상이 거리/진행 보상보다 30~144배 컸던 문제 수정. 거리/진행 보상 강화, 지수적 정렬 보상 축소하여 약 1:1 비율로 조정.
 
 ---
 
@@ -225,7 +225,7 @@ python pen_grasp_rl/scripts/play_direct.py --checkpoint /path/to/model.pt --num_
 
 ### 실험 1: V1 (APPROACH → ALIGN → GRASP)
 
-**날짜**: 2024-12-17
+**날짜**: 2025-12-17
 
 **설정**:
 - 펜 위치: 랜덤
@@ -264,7 +264,7 @@ python pen_grasp_rl/scripts/play_direct.py --checkpoint /path/to/model.pt --num_
 
 ### 실험 2: V2 (ALIGN → APPROACH → GRASP)
 
-**날짜**: 2024-12-17 ~ 2024-12-18
+**날짜**: 2025-12-17 ~ 2025-12-18
 
 **변경 사항**:
 1. 단계 순서: ALIGN → APPROACH → GRASP
@@ -311,7 +311,7 @@ python pen_grasp_rl/scripts/play_direct.py --checkpoint /path/to/model.pt --num_
 
 ### 실험 3: V3 (PRE_GRASP → DESCEND + 지수적 정렬 보상)
 
-**날짜**: 2024-12-18
+**날짜**: 2025-12-18
 
 **핵심 변경 사항**:
 1. **Pre-grasp 전략**: 펜캡 위 7cm에서 충분히 정렬 후 수직 하강
@@ -348,7 +348,7 @@ python pen_grasp_rl/scripts/play_direct.py --checkpoint /path/to/model.pt --num_
 
 ### 실험 4: V4 (작업 공간 기반 관절 한계 + 액션 스케일 축소)
 
-**날짜**: 2024-12-18
+**날짜**: 2025-12-18
 
 **핵심 변경 사항**:
 
@@ -404,7 +404,7 @@ python pen_grasp_rl/scripts/play_direct.py --checkpoint /path/to/model.pt --num_
 
 ### 실험 5: V5 (관절 한계 확장)
 
-**날짜**: 2024-12-18
+**날짜**: 2025-12-18
 
 **핵심 변경 사항**:
 
@@ -537,7 +537,7 @@ pen_grasp_rl/
 
 ### IK V1 실험 결과
 
-**날짜**: 2024-12-18
+**날짜**: 2025-12-18
 
 **설정**:
 - 펜 위치: 랜덤 (중심 기준)
@@ -574,7 +574,7 @@ pen_grasp_rl/
 
 ### IK V2 (ALIGN 단계 추가 + 펜 캡 기준 생성)
 
-**날짜**: 2024-12-18
+**날짜**: 2025-12-18
 
 **핵심 변경 사항**:
 
@@ -676,7 +676,7 @@ Step 900: reward=-0.2855, phases=[PRE:16, ALN:0, DESC:0], success=0
 
 ### IK V3 (펜 축 기준 접근 + 충돌 페널티 + 단계 체류 페널티)
 
-**날짜**: 2024-12-19
+**날짜**: 2025-12-19
 
 **V2 문제 분석**:
 - 그리퍼가 펜캡 "위"가 아닌 "옆"에서 접근
@@ -815,7 +815,7 @@ Step 1700: reward=-0.2558, phases=[APP:22, ALN:7, DESC:3, GRP:0], success=0
 
 ### IK V4 (Hybrid RL + TCP Control)
 
-**날짜**: 2024-12-19
+**날짜**: 2025-12-19
 
 **V3 문제 분석**:
 - perp_dist 조건(3cm)이 너무 엄격
@@ -926,7 +926,7 @@ Step 700: reward=0.0028, phases=[APP:0, ALN:0, FINE:0, DESC:31, GRP:1], success=
 
 ### IK V4 + 펜 각도 랜덤화 (roll/pitch 방식) - 발산
 
-**날짜**: 2024-12-19
+**날짜**: 2025-12-19
 
 **변경사항 (초기)**:
 ```python
@@ -980,7 +980,7 @@ Step 3109에서 LR=0.003 급등 → Gradient Explosion
 
 ### IK V4 + 펜 각도 랜덤화 (Z축 원뿔 방식) - 현재
 
-**날짜**: 2024-12-19
+**날짜**: 2025-12-19
 
 **변경사항**:
 ```python
@@ -1071,7 +1071,7 @@ Step 400: reward=0.4728, phases=[APP:0, ALN:0, FINE:2, DESC:29, GRP:1], success=
 
 ### IK V5 (TCP 버그 수정 + Curriculum Learning)
 
-**날짜**: 2024-12-22
+**날짜**: 2025-12-22
 
 **V4 문제 분석**:
 - TCP DESCEND 방향이 펜 축 방향(-pen_z)으로 되어 있어, 펜이 기울어지면 그리퍼가 옆으로 이동
@@ -1154,7 +1154,7 @@ python pen_grasp_rl/scripts/play_ik_v5.py --checkpoint ./path/to/model.pt --leve
 
 **학습 결과**:
 
-### V5.2 학습 결과 (2024-12-22)
+### V5.2 학습 결과 (2025-12-22)
 
 **변경사항 (V5.1 → V5.2)**:
 - 단계 전환 조건 강화: 자세 + 위치 동시 체크
@@ -1189,7 +1189,7 @@ ALIGN: 자세만 reward, perp_dist reward 없음 ❌
 → 멀리서 펜을 향해 기울임 → 앞으로 드러눕음
 ```
 
-### V5.3 수정 (2024-12-22)
+### V5.3 수정 (2025-12-22)
 
 **핵심 변경: End-to-End 스타일 Reward**
 
@@ -1214,7 +1214,7 @@ Step 100: phases=[APP:0, ALN:0, FINE:0, DESC:5, GRP:11], success=106
 
 ---
 
-### V5.4 수정 (2024-12-22)
+### V5.4 수정 (2025-12-22)
 
 **핵심 변경: PHASE_LIFT + Good Grasp 조건**
 
@@ -1358,38 +1358,38 @@ python pen_grasp_rl/scripts/play_ik_v5.py --checkpoint /path/to/model.pt --level
 
 | 날짜 | 변경 | 커밋 |
 |------|------|------|
-| 2024-12-17 | Direct 환경 초기 구현 (V1) | `3472b87` |
-| 2024-12-17 | 단계 순서 변경 (V2): ALIGN → APPROACH → GRASP | `c3fe5c3` |
-| 2024-12-18 | Pre-grasp 방식 (V3) + 지수적 정렬 보상 + 특이점 회피 | - |
-| 2024-12-18 | V4: 작업 공간 기반 관절 한계 + action_scale 축소 + 특이점 페널티 제거 | - |
-| 2024-12-18 | V5: 관절 한계 확장 (그리퍼 아래 향하도록) | `1d71d76` |
-| 2024-12-18 | IK V1: Task Space Control 환경 추가 | `6318733` |
-| 2024-12-18 | IK V2: ALIGN 단계 추가 + 펜 캡 위치 기준 생성 | - |
-| 2024-12-18 | IK V2 학습 결과: 그리퍼가 펜캡 "옆"으로 접근 문제 발견 | - |
-| 2024-12-19 | **IK V3**: 펜 축 기준 접근 + 충돌 페널티 + 단계 체류 페널티 | `389e453` |
-| 2024-12-19 | **IK V3 학습**: Mean Reward +1,621 (2025 iter) | - |
-| 2024-12-19 | **IK V3 Play 테스트**: 조건 엄격, GRASP 진입 실패 | - |
-| 2024-12-19 | **IK V4**: Hybrid RL + TCP Control | - |
-| 2024-12-19 | **IK V4 학습**: success=3, DESCEND 진입 성공 (1470 iter) | - |
-| 2024-12-19 | **IK V4 + 각도 랜덤화 (roll/pitch)**: 발산 (Noise Std 10.5+, Adaptive LR 폭주) | `1a1f93f` |
-| 2024-12-19 | **IK V4 + 각도 랜덤화 (Z축 원뿔)**: 정확한 최대 30도 기울기 제한 | `712c927` |
-| 2024-12-22 | **IK V4 + 각도 랜덤화 학습**: Mean Reward 1,152 (3500 steps) | - |
-| 2024-12-22 | **IK V4 Play 테스트**: TCP DESCEND 버그 발견 (그리퍼 바닥으로 꼬라박음) | - |
-| 2024-12-22 | **IK V5 구현**: TCP 버그 수정 (월드 Z축 하강) + Curriculum Learning | `fa8b330` |
-| 2024-12-22 | **IK V5.2**: 전환 조건 강화 (자세+위치 동시 체크) | `18345f4` |
-| 2024-12-22 | **IK V5.2 학습**: Mean Reward 2,553 (+114%), Play에서 앞으로 드러눕는 문제 발견 | - |
-| 2024-12-22 | **IK V5.3**: End-to-End 스타일 reward (모든 단계에서 위치+자세 동시) | - |
-| 2024-12-22 | **IK V5.3 Play 테스트**: success=106 달성! 그리퍼 닫기/LIFT 문제 발견 | - |
-| 2024-12-22 | **IK V5.4**: PHASE_LIFT 추가 + Good Grasp 조건 + 그리퍼 1.1 | `2495832` |
-| 2024-12-23 | **IK V5.4 학습 (30K)**: Reward Hacking 발견 - 로봇 뒤집어짐 | - |
-| 2024-12-23 | **IK V5.5**: 위치 조건부 자세 reward (exponential) | - |
-| 2024-12-23 | **IK V5.6**: 점진적 보상 증가 + Phase 체류 패널티 | - |
-| 2024-12-23 | **IK V5.6 학습 (4K)**: DESCEND 87%, GRASP 0% (전환 실패) | - |
-| 2024-12-23 | **IK V5.7**: 5단계로 간소화 (FINE_ALIGN 제거) | `9c8e149` |
-| 2024-12-23 | **IK V5.7 학습 (1K)**: DESCEND 94%, GRASP 0% (TCP 속도 문제) | - |
-| 2024-12-23 | **IK V5.8**: 전면 RL 제어 (TCP 하드코딩 제거) | `e8a5075` |
-| 2024-12-23 | **IK V5.9**: LIFT 제거 + Hybrid Readiness 보상 | - |
-| 2024-12-23 | **IK V6**: 3DoF 위치 제어 + 자동 자세 정렬 (핵심 설계 변경) | - |
+| 2025-12-17 | Direct 환경 초기 구현 (V1) | `3472b87` |
+| 2025-12-17 | 단계 순서 변경 (V2): ALIGN → APPROACH → GRASP | `c3fe5c3` |
+| 2025-12-18 | Pre-grasp 방식 (V3) + 지수적 정렬 보상 + 특이점 회피 | - |
+| 2025-12-18 | V4: 작업 공간 기반 관절 한계 + action_scale 축소 + 특이점 페널티 제거 | - |
+| 2025-12-18 | V5: 관절 한계 확장 (그리퍼 아래 향하도록) | `1d71d76` |
+| 2025-12-18 | IK V1: Task Space Control 환경 추가 | `6318733` |
+| 2025-12-18 | IK V2: ALIGN 단계 추가 + 펜 캡 위치 기준 생성 | - |
+| 2025-12-18 | IK V2 학습 결과: 그리퍼가 펜캡 "옆"으로 접근 문제 발견 | - |
+| 2025-12-19 | **IK V3**: 펜 축 기준 접근 + 충돌 페널티 + 단계 체류 페널티 | `389e453` |
+| 2025-12-19 | **IK V3 학습**: Mean Reward +1,621 (2025 iter) | - |
+| 2025-12-19 | **IK V3 Play 테스트**: 조건 엄격, GRASP 진입 실패 | - |
+| 2025-12-19 | **IK V4**: Hybrid RL + TCP Control | - |
+| 2025-12-19 | **IK V4 학습**: success=3, DESCEND 진입 성공 (1470 iter) | - |
+| 2025-12-19 | **IK V4 + 각도 랜덤화 (roll/pitch)**: 발산 (Noise Std 10.5+, Adaptive LR 폭주) | `1a1f93f` |
+| 2025-12-19 | **IK V4 + 각도 랜덤화 (Z축 원뿔)**: 정확한 최대 30도 기울기 제한 | `712c927` |
+| 2025-12-22 | **IK V4 + 각도 랜덤화 학습**: Mean Reward 1,152 (3500 steps) | - |
+| 2025-12-22 | **IK V4 Play 테스트**: TCP DESCEND 버그 발견 (그리퍼 바닥으로 꼬라박음) | - |
+| 2025-12-22 | **IK V5 구현**: TCP 버그 수정 (월드 Z축 하강) + Curriculum Learning | `fa8b330` |
+| 2025-12-22 | **IK V5.2**: 전환 조건 강화 (자세+위치 동시 체크) | `18345f4` |
+| 2025-12-22 | **IK V5.2 학습**: Mean Reward 2,553 (+114%), Play에서 앞으로 드러눕는 문제 발견 | - |
+| 2025-12-22 | **IK V5.3**: End-to-End 스타일 reward (모든 단계에서 위치+자세 동시) | - |
+| 2025-12-22 | **IK V5.3 Play 테스트**: success=106 달성! 그리퍼 닫기/LIFT 문제 발견 | - |
+| 2025-12-22 | **IK V5.4**: PHASE_LIFT 추가 + Good Grasp 조건 + 그리퍼 1.1 | `2495832` |
+| 2025-12-23 | **IK V5.4 학습 (30K)**: Reward Hacking 발견 - 로봇 뒤집어짐 | - |
+| 2025-12-23 | **IK V5.5**: 위치 조건부 자세 reward (exponential) | - |
+| 2025-12-23 | **IK V5.6**: 점진적 보상 증가 + Phase 체류 패널티 | - |
+| 2025-12-23 | **IK V5.6 학습 (4K)**: DESCEND 87%, GRASP 0% (전환 실패) | - |
+| 2025-12-23 | **IK V5.7**: 5단계로 간소화 (FINE_ALIGN 제거) | `9c8e149` |
+| 2025-12-23 | **IK V5.7 학습 (1K)**: DESCEND 94%, GRASP 0% (TCP 속도 문제) | - |
+| 2025-12-23 | **IK V5.8**: 전면 RL 제어 (TCP 하드코딩 제거) | `e8a5075` |
+| 2025-12-23 | **IK V5.9**: LIFT 제거 + Hybrid Readiness 보상 | - |
+| 2025-12-23 | **IK V6**: 3DoF 위치 제어 + 자동 자세 정렬 (핵심 설계 변경) | - |
 
 ---
 
@@ -1480,7 +1480,7 @@ rewards += rew_scale_align_orientation * 0.5 * align_quality * position_weight
 
 ### IK V5.5 학습 결과 (4K iterations)
 
-**날짜**: 2024-12-23
+**날짜**: 2025-12-23
 
 **학습 결과**:
 
@@ -1530,7 +1530,7 @@ rewards += rew_scale_align_orientation * 0.5 * align_quality * position_weight
 
 ## IK V5.6 - 점진적 보상 증가 + 3가지 수정
 
-**날짜**: 2024-12-23
+**날짜**: 2025-12-23
 
 **V5.5 문제점**: position_weight max=5.0이 너무 높아 ALIGN에서 ~27/step → 다음 phase 전환보다 머무르는 게 유리
 
@@ -1604,7 +1604,7 @@ rewards += rew_scale_phase_stagnation * phase_step_count
 
 ## IK V5.7 - 5단계로 간소화 (FINE_ALIGN 제거)
 
-**날짜**: 2024-12-23
+**날짜**: 2025-12-23
 
 ### V5.6 학습 분석 (4000 iterations)
 
@@ -1680,7 +1680,7 @@ rewards += 10.0 * clamp(descend_progress * 100, 0, 1)
 
 ## IK V5.8 - 전면 RL 제어 (TCP 하드코딩 제거)
 
-**날짜**: 2024-12-23
+**날짜**: 2025-12-23
 
 ### V5.7 학습 분석 (1000 iterations)
 
@@ -1778,7 +1778,7 @@ if current_height >= LIFT_HEIGHT:
 
 ## IK V5.9 - LIFT 제거 + Hybrid Readiness 보상
 
-**날짜**: 2024-12-23
+**날짜**: 2025-12-23
 
 ### V5.8 학습 분석 (1700 iterations)
 
@@ -1880,7 +1880,7 @@ rewards += 5.0 * transition_readiness
 
 ## IK V6 - 3DoF 위치 제어 + 자동 자세 정렬 (핵심 설계 변경)
 
-**날짜**: 2024-12-23
+**날짜**: 2025-12-23
 
 ### V5.x 시리즈의 근본적 한계
 
@@ -2039,7 +2039,7 @@ python pen_grasp_rl/scripts/train_v6.py --headless --num_envs 4096 --level 0 --f
 
 ---
 
-### V6.1 수정 (2024-12-23)
+### V6.1 수정 (2025-12-23)
 
 **문제 분석**:
 - `APPROACH_TO_GRASP_DIST = 0.03m` (3cm)는 실제로 펜을 잡기 어려운 거리
@@ -2091,7 +2091,7 @@ python pen_grasp_rl/scripts/train_v6.py --headless --num_envs 4096 --level 0
 
 ---
 
-### V6.2 수정 (2024-12-23)
+### V6.2 수정 (2025-12-23)
 
 **V6.1 학습 문제점**:
 1. **거리 수렴 느림**: dist_to_cap이 0.06m까지 줄어드는 데 오래 걸림
@@ -2153,7 +2153,7 @@ python pen_grasp_rl/scripts/train_v6.py --headless --num_envs 4096 --level 0 --f
 
 ---
 
-## IK V6 30,000 스텝 학습 결과 (2024-12-24)
+## IK V6 30,000 스텝 학습 결과 (2025-12-24)
 
 ### 학습 환경
 - **환경**: E0509IKEnvV6 (3DoF 위치 제어 + 자동 자세 정렬)
@@ -2208,7 +2208,7 @@ Step 300: dist_to_cap=0.86cm, perp_dist=0.51cm, axis_dist=0.63cm
 
 ---
 
-## IK V7 환경 (2024-12-24) - APPROACH Only
+## IK V7 환경 (2025-12-24) - APPROACH Only
 
 ### V7 핵심 변경사항
 
@@ -2271,7 +2271,7 @@ python pen_grasp_rl/scripts/train_ik_v7.py --headless --num_envs 4096 --level 0 
 
 ---
 
-## IK V7 5000 iter 학습 결과 (2024-12-24)
+## IK V7 5000 iter 학습 결과 (2025-12-24)
 
 ### 학습 설정
 - **Level**: 0 (펜 수직)
@@ -2309,7 +2309,7 @@ python pen_grasp_rl/scripts/train_ik_v7.py --headless --num_envs 4096 --level 0 
 
 ---
 
-## IK V7.1 수정 (2024-12-24) - dot 조건 제거
+## IK V7.1 수정 (2025-12-24) - dot 조건 제거
 
 ### 변경사항
 
@@ -2354,4 +2354,238 @@ python pen_grasp_rl/scripts/train_v7.py --headless --num_envs 4096 --level 0
 1. V7.1 학습 실행 및 속도 확인
 2. V6 수준 (537 iter에 20cm)과 비교
 3. 성공 조건 도달 확인
+
+---
+
+## IK V7.1 100,000 iter 학습 결과 (2025-12-25)
+
+### 학습 설정
+- **Level**: 0 (펜 수직)
+- **환경 수**: 4096
+- **Iterations**: 100,000
+- **모델**: `model_99999.pt`
+
+### 학습 결과
+
+**학습 그래프**:
+
+![IK V7 100k Training](images/ikv7_100k_training.png)
+
+| 메트릭 | 최종값 | 목표 | 상태 |
+|--------|--------|------|------|
+| Mean Reward | ~4200 | - | ✅ 수렴 |
+| Episode Length | 449 (max) | - | ✅ |
+| dist_to_cap | ~1-2cm | <3cm | ✅ 달성 |
+| perp_dist | ~0.5cm | <1cm | ✅ 달성 |
+| on_correct_side | ~100% | - | ✅ |
+| total_success | 다수 | - | ✅ |
+
+### Play 테스트 결과
+
+**Level 0 (수직 펜)**:
+- dist_to_cap: ~1cm
+- perp_dist: ~0.5cm
+- 성공률: 높음
+
+**핵심 발견**: dot 조건 제거 후 V6 수준의 학습 속도 회복!
+
+---
+
+## 확장 레벨 테스트 (2025-12-26)
+
+### Level 4, 5, 6 추가 (테스트용)
+
+Level 0으로 학습한 `model_99999.pt`가 더 극단적인 펜 기울기에서도 동작하는지 확인:
+
+```python
+CURRICULUM_TILT_MAX = {
+    0: 0.0,     # Level 0: 수직 (0°)
+    1: 0.175,   # Level 1: 10°
+    2: 0.35,    # Level 2: 20°
+    3: 0.52,    # Level 3: 30°
+    4: 0.785,   # Level 4: 45° (테스트용)
+    5: 1.047,   # Level 5: 60° (테스트용)
+    6: 1.309,   # Level 6: 75° (극한 테스트)
+}
+```
+
+### 테스트 결과
+
+| Level | 펜 기울기 | dist_to_cap | perp_dist | 축 정렬 | 결과 |
+|-------|-----------|-------------|-----------|---------|------|
+| 0 | 0° | ~1cm | ~0.5cm | 완벽 | ✅ 성공 |
+| 3 | 30° | ~1-2cm | ~0.5cm | 완벽 | ✅ 성공 |
+| 6 | 75° | ~2-3cm | ~1cm | 완벽 | ✅ 대부분 성공 |
+
+### 핵심 발견: IK 자동 정렬의 힘
+
+**Level 0만 학습해도 Level 6(75°)까지 동작!**
+
+- **이유**: `_compute_auto_orientation()`이 매 스텝 펜 축 기반 자세 자동 계산
+- **Policy 역할**: 위치(x, y, z)만 학습
+- **IK 역할**: 자세 정렬 자동 처리
+- **결론**: 추가 Curriculum Learning 불필요!
+
+### 문제점 발견
+
+Level 6(75°) 테스트 중 일부 환경에서 로봇이 바닥으로 충돌하는 현상 발생:
+- 극단적인 기울기에서 IK 솔루션이 불안정
+- 안전장치 필요성 확인
+
+---
+
+## IK V7.2 안전장치 추가 (2025-12-26)
+
+### 안전 상수 추가
+
+```python
+# V7.2: 안전 종료 조건 (Sim2Real 호환)
+SAFETY_MIN_Z_HEIGHT = 0.02       # 그리퍼 Z 높이 최소값 (2cm)
+SAFETY_MAX_DIST_FROM_PEN = 0.5   # 펜에서 최대 거리 (50cm)
+```
+
+### 안전 종료 조건 (`_get_dones()`)
+
+```python
+# 1. Z 높이 위험 (바닥 충돌 방지)
+z_too_low = grasp_pos_local[:, 2] < SAFETY_MIN_Z_HEIGHT
+
+# 2. 펜에서 너무 멀어짐
+too_far_from_pen = dist_to_cap > SAFETY_MAX_DIST_FROM_PEN
+
+# 안전 위반 시 에피소드 즉시 종료
+terminated = success | z_too_low | too_far_from_pen
+```
+
+### 안전 페널티 (`_get_rewards()`)
+
+```python
+# Z 높이가 낮아지면 페널티
+z_danger = z_height < 0.04   # 4cm 이하 경고
+z_critical = z_height < 0.02  # 2cm 이하 심각
+rewards[z_danger] -= 2.0
+rewards[z_critical] -= 5.0
+
+# 펜에서 너무 멀어지면 페널티
+too_far = distance_to_cap > 0.4  # 40cm 이상
+rewards[too_far] -= 2.0
+```
+
+### 효과
+
+1. **Play 테스트**: 안전 위반 시 에피소드 자동 리셋 (바닥 충돌 방지)
+2. **학습 시**: 페널티로 안전 영역 유지 학습
+3. **Sim2Real**: 시뮬레이션과 실제 로봇 동일 기준
+
+---
+
+## Sim2Real Controller 안전장치 (2025-12-26)
+
+### pen_grasp_controller.py 업데이트
+
+**안전 설정 추가**:
+```python
+@dataclass
+class ControllerConfig:
+    # 작업 공간 한계 (로봇 베이스 좌표계, 미터)
+    workspace_min: tuple = (-0.2, -0.5, 0.05)
+    workspace_max: tuple = (0.7, 0.5, 0.6)
+
+    # Z 높이 제한 (테이블 충돌 방지)
+    min_z_height_m: float = 0.05  # 5cm 이하로 내려가지 않음
+
+    # 진행 상황 모니터링
+    no_progress_steps: int = 100
+    no_progress_threshold_m: float = 0.01
+
+    # 비상 정지 조건
+    max_dist_from_target_m: float = 0.8
+```
+
+**안전 체크 함수**:
+```python
+def _check_safety(self, gripper_pos, dist_to_cap):
+    # 1. Z 높이 제한
+    if gripper_pos[2] < self.config.min_z_height_m:
+        return False, "Z 높이 위험!"
+
+    # 2. 작업 공간 한계
+    if not in_workspace(gripper_pos):
+        return False, "작업 공간 초과!"
+
+    # 3. 타겟에서 너무 멀어짐
+    if dist_to_cap > self.config.max_dist_from_target_m:
+        return False, "타겟에서 너무 멀어짐!"
+
+    return True, ""
+```
+
+**진행 상황 모니터링**:
+- 100스텝 동안 1cm 이상 진전 없으면 중단
+- 무한 루프 또는 잘못된 방향 이동 방지
+
+---
+
+## Calibration 버그 수정 (2025-12-26)
+
+### ZYZ vs ZYX Euler 각도 문제
+
+**문제 발견**:
+- `robot_interface.py`에서 ZYX Euler 각도 사용
+- Doosan 로봇은 **ZYZ** Euler 각도 사용
+- 이로 인해 30cm+ 캘리브레이션 오차 발생
+
+**수정 전**:
+```python
+# 잘못된 코드 (ZYX)
+rotation = R.from_euler('ZYX', [rz, ry, rx]).as_matrix()
+```
+
+**수정 후**:
+```python
+# Doosan uses ZYZ Euler angles (degrees): [A, B, C]
+a, b, c = np.radians(posx[3]), np.radians(posx[4]), np.radians(posx[5])
+rotation = R.from_euler('ZYZ', [a, b, c]).as_matrix()
+```
+
+**참고**: https://manual.doosanrobotics.com/en/user/2.12.2/2.-A-Series/what-is-euler-angle-a-b-c
+
+---
+
+## 현재 상태 요약 (2025-12-26)
+
+### 완료된 작업
+
+| 항목 | 상태 | 설명 |
+|------|------|------|
+| V7.1 학습 | ✅ | 100k iter, Level 0 |
+| 확장 레벨 테스트 | ✅ | Level 6(75°)까지 동작 확인 |
+| V7.2 안전장치 | ✅ | 시뮬레이션 환경 |
+| Sim2Real 안전장치 | ✅ | 컨트롤러 |
+| ZYZ 버그 수정 | ✅ | 캘리브레이션 |
+
+### Sim2Real 준비 상태
+
+- **모델**: `model_99999.pt` (Level 0 학습, 모든 각도 동작)
+- **안전장치**: 시뮬레이션 + 실제 로봇 모두 적용
+- **다음 단계**: 실제 로봇 테스트
+
+### 실행 명령어
+
+**Play 테스트**:
+```bash
+cd ~/IsaacLab
+source ~/isaacsim_env/bin/activate
+python pen_grasp_rl/scripts/play_v7.py --checkpoint /home/fhekwn549/ikv7/model_99999.pt --level 0
+```
+
+**Sim2Real 실행**:
+```bash
+# 터미널 1: 브릿지
+cd ~/sim2real/sim2real
+python3 sim2real_bridge.py
+
+# 터미널 2: 컨트롤러
+python3 pen_grasp_controller.py --checkpoint /home/fhekwn549/ikv7/model_99999.pt
+```
 
