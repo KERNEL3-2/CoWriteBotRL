@@ -35,7 +35,7 @@ CoWriteBotRL/
 ```bash
 source ~/isaacsim_env/bin/activate
 cd ~/CoWriteBotRL
-python pen_grasp_rl/scripts/train.py --headless --num_envs 4096 --max_iterations 5000
+python pen_grasp_rl/scripts/train.py --headless --num_envs <num_envs> --max_iterations <num_iter>
 ```
 
 **옵션**
@@ -49,8 +49,8 @@ python pen_grasp_rl/scripts/train.py --headless --num_envs 4096 --max_iterations
 
 **이전 학습 이어서 하기 (Resume)**
 ```bash
-python pen_grasp_rl/scripts/train.py --headless --num_envs 4096 --max_iterations 1500 \
-    --resume --checkpoint ./logs/pen_grasp/model_3500.pt
+python pen_grasp_rl/scripts/train.py --headless --num_envs <num_envs> --max_iterations <num_iter> \
+    --resume --checkpoint <model_path>
 ```
 
 > 참고: `--max_iterations`는 이번 실행에서 추가로 학습할 횟수입니다.
@@ -60,7 +60,7 @@ python pen_grasp_rl/scripts/train.py --headless --num_envs 4096 --max_iterations
 ```bash
 source ~/isaacsim_env/bin/activate
 cd ~/CoWriteBotRL
-python pen_grasp_rl/scripts/play.py --checkpoint ./logs/pen_grasp/model_3500.pt
+python pen_grasp_rl/scripts/play.py --checkpoint <model_path>
 ```
 
 ### Digital Twin (실제 로봇 시각화)
