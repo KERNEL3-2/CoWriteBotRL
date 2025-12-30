@@ -177,8 +177,9 @@ class E0509IKEnvV7Cfg(DirectRLEnvCfg):
     }
 
     # 펜 방향 랜덤화 (V5: Curriculum Learning으로 동적 설정)
-    # pen_tilt_max는 curriculum_level에 따라 _reset_idx에서 결정됨
-    pen_tilt_max = 0.0   # 기본값 (curriculum_level=0: 수직)
+    # pen_tilt_min/max: 직접 설정하면 curriculum_level 무시
+    pen_tilt_min = None  # None이면 curriculum_level 사용
+    pen_tilt_max = None  # None이면 curriculum_level 사용
     pen_yaw_range = (-3.14, 3.14)  # Z축 회전은 전체 (360°)
 
     # IK 컨트롤러 설정
@@ -710,8 +711,14 @@ class E0509IKEnvV7(DirectRLEnv):
         pen_state[:, 2] = self.scene.env_origins[env_ids, 2] + pen_center_z
 
         # Curriculum Learning: 펜 기울기 설정
-        curriculum_tilt_max = CURRICULUM_TILT_MAX.get(self.cfg.curriculum_level, 0.0)
-        tilt = sample_uniform(0, curriculum_tilt_max, (len(env_ids),), device=self.device)
+        # pen_tilt_min/max가 설정되어 있으면 직접 사용, 아니면 curriculum_level 사용
+        if self.cfg.pen_tilt_min is not None and self.cfg.pen_tilt_max is not None:
+            tilt_min = self.cfg.pen_tilt_min
+            tilt_max = self.cfg.pen_tilt_max
+        else:
+            tilt_min = 0.0
+            tilt_max = CURRICULUM_TILT_MAX.get(self.cfg.curriculum_level, 0.0)
+        tilt = sample_uniform(tilt_min, tilt_max, (len(env_ids),), device=self.device)
         azimuth = sample_uniform(0, 2 * 3.14159, (len(env_ids),), device=self.device)
         yaw = sample_uniform(
             self.cfg.pen_yaw_range[0], self.cfg.pen_yaw_range[1],

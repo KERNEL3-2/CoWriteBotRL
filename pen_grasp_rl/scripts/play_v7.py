@@ -26,6 +26,10 @@ parser.add_argument("--checkpoint", type=str, required=True, help="체크포인�
 parser.add_argument("--num_steps", type=int, default=2000, help="실행할 스텝 수")
 parser.add_argument("--level", type=int, default=0, choices=[0, 1, 2, 3],
                     help="Curriculum Level (0: 수직, 1: 10°, 2: 20°, 3: 30°)")
+parser.add_argument("--tilt-min", type=float, default=None,
+                    help="펜 기울기 최소값 (도). 설정 시 --level 무시")
+parser.add_argument("--tilt-max", type=float, default=None,
+                    help="펜 기울기 최대값 (도). 설정 시 --level 무시")
 parser.add_argument("--smooth-alpha", type=float, default=1.0,
                     help="Action smoothing factor (0=no smooth, 1=full smooth). Default: 1.0 (OFF)")
 parser.add_argument("--dead-zone", type=float, default=0.0,
@@ -180,6 +184,11 @@ def main():
     env_cfg = get_env_cfg_for_level(args.level)
     env_cfg.scene.num_envs = args.num_envs
 
+    # --tilt-min, --tilt-max가 지정되면 직접 설정 (도 → 라디안 변환)
+    if args.tilt_min is not None and args.tilt_max is not None:
+        env_cfg.pen_tilt_min = args.tilt_min * 3.14159 / 180.0
+        env_cfg.pen_tilt_max = args.tilt_max * 3.14159 / 180.0
+
     env = E0509IKEnvV7(cfg=env_cfg)
 
     # 모델 로드
@@ -210,11 +219,20 @@ def main():
         scale_range_cm=args.scale_range,
     )
 
-    tilt_deg = CURRICULUM_TILT_MAX[args.level] * 180 / 3.14159
+    # tilt 범위 계산 (직접 설정 또는 curriculum level)
+    if args.tilt_min is not None and args.tilt_max is not None:
+        tilt_min_deg = args.tilt_min
+        tilt_max_deg = args.tilt_max
+        tilt_info = f"펜 기울기: {tilt_min_deg:.0f}°~{tilt_max_deg:.0f}° (직접 설정)"
+    else:
+        tilt_min_deg = 0
+        tilt_max_deg = CURRICULUM_TILT_MAX[args.level] * 180 / 3.14159
+        tilt_info = f"Curriculum Level: {args.level} (펜 기울기: 0°~{tilt_max_deg:.0f}°)"
+
     print("=" * 70)
     print("E0509 IK V7 테스트 시작 (3DoF 위치 + 자동 자세 정렬)")
     print("=" * 70)
-    print(f"  Curriculum Level: {args.level} (펜 최대 기울기: {tilt_deg:.0f}°)")
+    print(f"  {tilt_info}")
     print(f"  환경 수: {args.num_envs}")
     print(f"  실행 스텝: {args.num_steps}")
     print(f"  관찰 차원: {obs_dim}")
@@ -287,7 +305,7 @@ def main():
     print("\n" + "=" * 70)
     print("테스트 완료!")
     print("=" * 70)
-    print(f"Curriculum Level: {args.level} (펜 최대 기울기: {tilt_deg:.0f}°)")
+    print(f"  {tilt_info}")
     print(f"총 성공 횟수: {final_stats['total_success']}")
     print(f"캡 위에 있는 환경: {final_stats.get('on_correct_side', 0)}/{args.num_envs}")
     print("=" * 70)
