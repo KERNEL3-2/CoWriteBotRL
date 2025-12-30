@@ -39,6 +39,13 @@ from .e0509_ik_env_v5 import (
     E0509IKEnvV5, E0509IKEnvV5Cfg, E0509IKEnvV5Cfg_PLAY,
     E0509IKEnvV5Cfg_L0, E0509IKEnvV5Cfg_L1, E0509IKEnvV5Cfg_L2, E0509IKEnvV5Cfg_L3,
 )
+from .e0509_ik_env_v7 import (
+    E0509IKEnvV7, E0509IKEnvV7Cfg, E0509IKEnvV7Cfg_PLAY,
+    E0509IKEnvV7Cfg_L0, E0509IKEnvV7Cfg_L1, E0509IKEnvV7Cfg_L2, E0509IKEnvV7Cfg_L3,
+)
+
+# OSC 기반 환경
+from .e0509_osc_env import E0509OSCEnv, E0509OSCEnvCfg, E0509OSCEnvCfg_PLAY
 
 __all__ = [
     # Manager-Based
@@ -56,4 +63,9 @@ __all__ = [
     "E0509IKEnvV4", "E0509IKEnvV4Cfg", "E0509IKEnvV4Cfg_PLAY",
     "E0509IKEnvV5", "E0509IKEnvV5Cfg", "E0509IKEnvV5Cfg_PLAY",
     "E0509IKEnvV5Cfg_L0", "E0509IKEnvV5Cfg_L1", "E0509IKEnvV5Cfg_L2", "E0509IKEnvV5Cfg_L3",
+    # V7 (APPROACH only - Sim2Real Ready)
+    "E0509IKEnvV7", "E0509IKEnvV7Cfg", "E0509IKEnvV7Cfg_PLAY",
+    "E0509IKEnvV7Cfg_L0", "E0509IKEnvV7Cfg_L1", "E0509IKEnvV7Cfg_L2", "E0509IKEnvV7Cfg_L3",
+    # OSC (Operational Space Control)
+    "E0509OSCEnv", "E0509OSCEnvCfg", "E0509OSCEnvCfg_PLAY",
 ]
