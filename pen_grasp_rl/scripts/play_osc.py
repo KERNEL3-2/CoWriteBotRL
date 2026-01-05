@@ -116,6 +116,9 @@ def main():
     obs = obs_dict["policy"]
     step = 0
 
+    # 통계 수집용
+    dot_history = []
+
     while simulation_app.is_running():
         with torch.inference_mode():
             actions = policy(obs)
@@ -124,9 +127,33 @@ def main():
         obs = obs_dict["policy"]
         step += 1
 
-        # 통계 출력 (1000 스텝마다)
-        if step % 1000 == 0:
-            print(f"[Step {step}] Running...")
+        # dot product 계산 (그리퍼 Z축과 펜 Z축)
+        gripper_z = env._get_gripper_z_axis()
+        pen_z = env._get_pen_z_axis()
+        dot = torch.sum(gripper_z * pen_z, dim=-1)
+        dot_history.extend(dot.cpu().tolist())
+
+        # 통계 출력 (500 스텝마다)
+        if step % 500 == 0:
+            dot_tensor = torch.tensor(dot_history[-5000:])  # 최근 5000개
+
+            print(f"\n[Step {step}] Dot Product 분포 분석")
+            print(f"  평균: {dot_tensor.mean():.4f}")
+            print(f"  중앙값: {dot_tensor.median():.4f}")
+            print(f"  표준편차: {dot_tensor.std():.4f}")
+            print(f"  최소/최대: {dot_tensor.min():.4f} / {dot_tensor.max():.4f}")
+
+            # 구간별 비율
+            excellent = (dot_tensor < -0.9).float().mean() * 100
+            good = ((dot_tensor >= -0.9) & (dot_tensor < -0.7)).float().mean() * 100
+            fair = ((dot_tensor >= -0.7) & (dot_tensor < -0.5)).float().mean() * 100
+            poor = (dot_tensor >= -0.5).float().mean() * 100
+
+            print(f"  분포:")
+            print(f"    dot < -0.9 (우수): {excellent:.1f}%")
+            print(f"    -0.9 ~ -0.7 (양호): {good:.1f}%")
+            print(f"    -0.7 ~ -0.5 (보통): {fair:.1f}%")
+            print(f"    dot > -0.5 (불량): {poor:.1f}%")
 
     env.close()
     simulation_app.close()

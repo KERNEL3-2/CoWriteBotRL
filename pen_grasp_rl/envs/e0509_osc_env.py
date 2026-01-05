@@ -182,11 +182,18 @@ class E0509OSCEnvCfg(DirectRLEnvCfg):
     rew_scale_perp_dist = -8.0
     rew_scale_perp_exp = 5.0
     rew_scale_approach_progress = 3.0
-    rew_scale_alignment = 5.0
+    rew_scale_alignment = 10.0  # 5.0 → 10.0 (정렬 보상 강화)
     rew_scale_ready_bonus = 10.0
     rew_scale_success = 100.0
     rew_scale_action = -0.01
     rew_scale_collision = -50.0  # 충돌 페널티 강화
+
+    # ==========================================================================
+    # 성공 조건
+    # ==========================================================================
+    success_dist_to_cap = 0.03     # 캡까지 거리 < 3cm
+    success_perp_dist = 0.01       # 펜 축 정렬 < 1cm
+    success_hold_steps = 30        # 성공 유지 스텝 (Default: 30)
 
 
 class E0509OSCEnv(DirectRLEnv):
@@ -566,23 +573,23 @@ class E0509OSCEnv(DirectRLEnv):
 
         # 성공 조건 근접 보너스
         near_success = (
-            (distance_to_cap < SUCCESS_DIST_TO_CAP * 2) &
-            (perpendicular_dist < SUCCESS_PERP_DIST * 2) &
+            (distance_to_cap < self.cfg.success_dist_to_cap * 2) &
+            (perpendicular_dist < self.cfg.success_perp_dist * 2) &
             on_correct_side
         )
         rewards[near_success] += self.cfg.rew_scale_ready_bonus * 0.5
 
         # 성공 조건 체크
         success_condition = (
-            (distance_to_cap < SUCCESS_DIST_TO_CAP) &
-            (perpendicular_dist < SUCCESS_PERP_DIST) &
+            (distance_to_cap < self.cfg.success_dist_to_cap) &
+            (perpendicular_dist < self.cfg.success_perp_dist) &
             on_correct_side
         )
 
         self.success_hold_count[success_condition] += 1
         self.success_hold_count[~success_condition] = 0
 
-        success = self.success_hold_count >= SUCCESS_HOLD_STEPS
+        success = self.success_hold_count >= self.cfg.success_hold_steps
         rewards[success] += self.cfg.rew_scale_success
         self.success_count[success] += 1
 
@@ -608,10 +615,46 @@ class E0509OSCEnv(DirectRLEnv):
 
         self.extras["log"]["OSC/success_hold_count_mean"] = self.success_hold_count.float().mean().item()
         self.extras["log"]["OSC/total_success"] = float(self.success_count.sum().item())
-        self.extras["log"]["OSC/collision_count"] = float(collision.sum().item())  # 충돌 횟수
+        self.extras["log"]["OSC/collision_count"] = float(collision.sum().item())
         self.extras["log"]["Metrics/dist_to_cap_mean"] = distance_to_cap.mean().item()
         self.extras["log"]["Metrics/perp_dist_mean"] = perpendicular_dist.mean().item()
         self.extras["log"]["Metrics/dot_mean"] = dot.mean().item()
+
+        # dot 분포 로깅
+        dot_excellent = (dot < -0.9).float().mean().item() * 100
+        dot_poor = (dot > -0.5).float().mean().item() * 100
+        self.extras["log"]["DotDist/excellent_pct"] = dot_excellent
+        self.extras["log"]["DotDist/poor_pct"] = dot_poor
+
+        # 아웃라이어(dot > -0.5) 발생 시 펜 위치/각도 분석
+        outlier_mask = dot > -0.5
+        if outlier_mask.any():
+            # 펜 캡 위치 (로컬 좌표)
+            cap_pos_local = cap_pos - self.scene.env_origins
+            outlier_cap_pos = cap_pos_local[outlier_mask]
+
+            # 펜 기울기 계산 (월드 Z축과의 각도)
+            pen_z_outlier = pen_z[outlier_mask]
+            world_z = torch.tensor([0.0, 0.0, 1.0], device=self.device)
+            cos_tilt = torch.sum(pen_z_outlier * world_z, dim=-1)
+            tilt_rad = torch.acos(torch.clamp(cos_tilt.abs(), -1.0, 1.0))
+            tilt_deg = tilt_rad * 180.0 / 3.14159
+
+            self.extras["log"]["Outlier/count"] = float(outlier_mask.sum().item())
+            self.extras["log"]["Outlier/pen_x_mean"] = outlier_cap_pos[:, 0].mean().item()
+            self.extras["log"]["Outlier/pen_y_mean"] = outlier_cap_pos[:, 1].mean().item()
+            self.extras["log"]["Outlier/pen_z_mean"] = outlier_cap_pos[:, 2].mean().item()
+            self.extras["log"]["Outlier/pen_tilt_deg_mean"] = tilt_deg.mean().item()
+
+            # 아웃라이어 펜 위치 범위
+            self.extras["log"]["Outlier/pen_x_min"] = outlier_cap_pos[:, 0].min().item()
+            self.extras["log"]["Outlier/pen_x_max"] = outlier_cap_pos[:, 0].max().item()
+            self.extras["log"]["Outlier/pen_y_min"] = outlier_cap_pos[:, 1].min().item()
+            self.extras["log"]["Outlier/pen_y_max"] = outlier_cap_pos[:, 1].max().item()
+            self.extras["log"]["Outlier/pen_z_min"] = outlier_cap_pos[:, 2].min().item()
+            self.extras["log"]["Outlier/pen_z_max"] = outlier_cap_pos[:, 2].max().item()
+            self.extras["log"]["Outlier/pen_tilt_deg_min"] = tilt_deg.min().item()
+            self.extras["log"]["Outlier/pen_tilt_deg_max"] = tilt_deg.max().item()
 
         # 콘솔 출력
         if self._global_step % self._phase_print_interval == 0:
@@ -625,12 +668,13 @@ class E0509OSCEnv(DirectRLEnv):
                   f"success_hold={self.success_hold_count.float().mean().item():.1f}, "
                   f"total_success={self.success_count.sum().item()}, "
                   f"collision={collision_cnt}", flush=True)
+            print(f"    → dot분포: 우수(<-0.9)={dot_excellent:.1f}%, 불량(>-0.5)={dot_poor:.1f}%", flush=True)
 
         return rewards
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         """종료 조건"""
-        success = self.success_hold_count >= SUCCESS_HOLD_STEPS
+        success = self.success_hold_count >= self.cfg.success_hold_steps
 
         # 충돌 시 에피소드 즉시 종료 (학습 효율 향상)
         terminated = success | self.collision_detected
@@ -820,12 +864,16 @@ class E0509OSCEnvCfg_Soft(E0509OSCEnvCfg):
     Sim2Real 전이 시 실제 로봇의 임피던스 특성에 맞춤
     - stiffness: 150 → 60 (더 부드러운 반응)
     - action_scale: 0.05 → 0.03 (더 작은 이동량)
+    - success_hold_steps: 30 → 10 (빠른 성공 판정)
     """
 
     # OSC 설정 (부드러운 동작)
     osc_motion_stiffness = 60.0       # 150 → 60 (부드럽게)
     osc_motion_damping_ratio = 1.0    # 임계 감쇠 유지
     action_scale = 0.03               # 0.05 → 0.03 (더 작은 스텝)
+
+    # 성공 조건 (Sim2Real 친화적)
+    success_hold_steps = 10           # 30 → 10 (빠른 성공 판정)
 
 
 @configclass

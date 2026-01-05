@@ -194,29 +194,75 @@ python pen_grasp_rl/scripts/play_osc.py --checkpoint /home/fhekwn549/e0509_osc/m
 
 ---
 
-## 실험 2: Soft OSC (예정)
+## 실험 2: Soft OSC (2025-01-05)
 
 ### 목표
 - 부드러운 동작으로 Sim2Real gap 최소화
 - 실제 로봇 임피던스 특성에 맞춤
 
-### 설정 변경
-| 파라미터 | Default | Soft | 이유 |
+### 설정
+| 파라미터 | Default | Soft | 변경 이유 |
 |----------|---------|------|------|
 | stiffness | 150 | 60 | 더 부드러운 반응 |
 | action_scale | 0.05 | 0.03 | 더 작은 이동량 |
+| hold_steps | 30 | 30 | 동일 |
 | damping_ratio | 1.0 | 1.0 | 임계 감쇠 유지 |
+| Learning Rate | Fixed (1e-4) | Fixed (1e-4) | 동일 |
+| iterations | 5000 | 5000 | 동일 |
 
-### 학습 명령어
+### 결과
+
+| 지표 | Default | Soft | 평가 |
+|------|---------|------|------|
+| Mean Reward | 6555 | 6041 | ✓ 유사 |
+| Episode Length | 438 | 431 | ✓ 유사 |
+| **Dot Mean (정렬)** | **-0.74** | **-0.40** | ⬇️ **크게 저하** |
+| Dist to Cap | 3.69cm | 4.31cm | ⬇️ 저하 |
+| Perp Dist | 0.84cm | 0.72cm | ✓ 유사 |
+
+### 비교 그래프
+
+![Default vs Soft Comparison](images/osc_default_vs_soft.png)
+
+### 분석
+
+**⚠️ Soft 모드 성능 저하 원인:**
+
+1. **stiffness=60 → 응답 느림**: 목표 위치 추적이 어려워 정렬 품질 저하
+2. **action_scale=0.03 → 이동량 감소**: 학습 속도 저하, 탐색 범위 축소
+
+**핵심 문제**: stiffness와 action_scale 두 파라미터를 동시에 변경하여 학습 난이도가 높아짐
+
+### 모델 위치
+```
+/home/fhekwn549/e0509_osc_soft/model_4999.pt
+```
+
+### 결론
+Soft 모드는 정렬 품질(dot)이 크게 저하되어 **실패**로 판정.
+다음 실험에서 개선 필요.
+
+---
+
+## 실험 3: 개선된 Soft OSC (예정)
+
+### 개선 방향
+
+**문제**: stiffness와 action_scale 동시 변경 → 학습 실패
+**해결**: 한 번에 하나씩만 변경
+
+### 권장 옵션
+
+| 옵션 | stiffness | action_scale | 예상 효과 |
+|------|-----------|--------------|----------|
+| **A (권장)** | 100 | 0.05 | stiffness만 적당히 낮춤 |
+| B | 80 | 0.05 | stiffness 더 낮춤 |
+| C | 150 | 0.03 | action_scale만 낮춤 |
+
+### 학습 명령어 (옵션 A)
 ```bash
-# Docker 컨테이너 내에서 실행
 cd /workspace/isaaclab
-python3 pen_grasp_rl/scripts/train_osc.py --headless --num_envs 4096 --soft --fixed_lr
-```
-
-### 로그 위치
-```
-/workspace/isaaclab/pen_grasp_rl/logs/e0509_osc_soft/
+python3 pen_grasp_rl/scripts/train_osc.py --headless --num_envs 4096 --stiffness 100 --fixed_lr
 ```
 
 ### 결과

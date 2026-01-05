@@ -17,11 +17,14 @@ OSC 장점:
     # Soft 모드 (stiffness=60, 부드러운 동작)
     python train_osc.py --headless --num_envs 4096 --soft
 
+    # 커스텀 설정 (명령행으로 직접 지정)
+    python train_osc.py --headless --num_envs 4096 --stiffness 80 --action_scale 0.04 --hold_steps 15
+
+    # Soft + 일부 오버라이드
+    python train_osc.py --headless --num_envs 4096 --soft --hold_steps 20
+
     # Fixed LR (안정적 학습)
     python train_osc.py --headless --num_envs 4096 --fixed_lr
-
-    # Soft + Fixed LR (추천: 부드러운 동작 + 안정적 학습)
-    python train_osc.py --headless --num_envs 4096 --soft --fixed_lr
 
     # 체크포인트에서 이어서
     python train_osc.py --headless --num_envs 4096 --checkpoint /path/to/model.pt
@@ -47,6 +50,11 @@ parser.add_argument("--max_iterations", type=int, default=5000, help="최대 학
 parser.add_argument("--checkpoint", type=str, default=None, help="이어서 학습할 체크포인트")
 parser.add_argument("--fixed_lr", action="store_true", help="Fixed Learning Rate 사용 (발산 방지)")
 parser.add_argument("--soft", action="store_true", help="Soft 모드 (stiffness=60, 부드러운 동작)")
+
+# 환경 설정 오버라이드
+parser.add_argument("--stiffness", type=float, default=None, help="OSC stiffness (Default: 150, Soft: 60)")
+parser.add_argument("--action_scale", type=float, default=None, help="Action scale (Default: 0.05, Soft: 0.03)")
+parser.add_argument("--hold_steps", type=int, default=None, help="성공 유지 스텝 (Default: 30, Soft: 10)")
 
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
@@ -130,12 +138,20 @@ def main():
     # =============================================================================
     if args.soft:
         env_cfg = E0509OSCEnvCfg_Soft()
-        env_mode = "Soft (stiffness=60, action_scale=0.03)"
+        env_mode = "Soft"
     else:
         env_cfg = E0509OSCEnvCfg()
-        env_mode = "Default (stiffness=150, action_scale=0.05)"
+        env_mode = "Default"
 
     env_cfg.scene.num_envs = args.num_envs
+
+    # 명령행 인자로 설정 오버라이드
+    if args.stiffness is not None:
+        env_cfg.osc_motion_stiffness = args.stiffness
+    if args.action_scale is not None:
+        env_cfg.action_scale = args.action_scale
+    if args.hold_steps is not None:
+        env_cfg.success_hold_steps = args.hold_steps
 
     env = E0509OSCEnv(cfg=env_cfg)
     env = RslRlVecEnvWrapper(env)
@@ -198,10 +214,10 @@ def main():
     print("  - J4: ±360° | J5: ±135° | J6: ±360°")
     print("=" * 70)
     print("성공 조건:")
-    print("  - 캡까지 거리 < 3cm")
-    print("  - 펜 축 정렬 (perp_dist < 1cm)")
+    print(f"  - 캡까지 거리 < {env_cfg.success_dist_to_cap*100:.0f}cm")
+    print(f"  - 펜 축 정렬 (perp_dist < {env_cfg.success_perp_dist*100:.0f}cm)")
     print("  - 캡 위에 있음")
-    print("  - 30 스텝 유지")
+    print(f"  - {env_cfg.success_hold_steps} 스텝 유지")
     print("=" * 70)
 
     runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
