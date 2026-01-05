@@ -11,11 +11,17 @@ OSC 장점:
 - 힘 제어 가능
 
 사용법:
-    # 기본 학습
+    # 기본 학습 (stiffness=150)
     python train_osc.py --headless --num_envs 4096
+
+    # Soft 모드 (stiffness=60, 부드러운 동작)
+    python train_osc.py --headless --num_envs 4096 --soft
 
     # Fixed LR (안정적 학습)
     python train_osc.py --headless --num_envs 4096 --fixed_lr
+
+    # Soft + Fixed LR (추천: 부드러운 동작 + 안정적 학습)
+    python train_osc.py --headless --num_envs 4096 --soft --fixed_lr
 
     # 체크포인트에서 이어서
     python train_osc.py --headless --num_envs 4096 --checkpoint /path/to/model.pt
@@ -40,6 +46,7 @@ parser.add_argument("--num_envs", type=int, default=4096, help="병렬 환경 �
 parser.add_argument("--max_iterations", type=int, default=5000, help="최대 학습 반복 횟수")
 parser.add_argument("--checkpoint", type=str, default=None, help="이어서 학습할 체크포인트")
 parser.add_argument("--fixed_lr", action="store_true", help="Fixed Learning Rate 사용 (발산 방지)")
+parser.add_argument("--soft", action="store_true", help="Soft 모드 (stiffness=60, 부드러운 동작)")
 
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
@@ -51,7 +58,7 @@ app_launcher = AppLauncher(args)
 simulation_app = app_launcher.app
 
 import torch
-from envs.e0509_osc_env import E0509OSCEnv, E0509OSCEnvCfg
+from envs.e0509_osc_env import E0509OSCEnv, E0509OSCEnvCfg, E0509OSCEnvCfg_Soft
 
 from rsl_rl.runners import OnPolicyRunner
 
@@ -121,7 +128,13 @@ def main():
     # =============================================================================
     # 환경 설정
     # =============================================================================
-    env_cfg = E0509OSCEnvCfg()
+    if args.soft:
+        env_cfg = E0509OSCEnvCfg_Soft()
+        env_mode = "Soft (stiffness=60, action_scale=0.03)"
+    else:
+        env_cfg = E0509OSCEnvCfg()
+        env_mode = "Default (stiffness=150, action_scale=0.05)"
+
     env_cfg.scene.num_envs = args.num_envs
 
     env = E0509OSCEnv(cfg=env_cfg)
@@ -142,7 +155,10 @@ def main():
     # =============================================================================
     # Runner 생성
     # =============================================================================
-    log_dir = "./pen_grasp_rl/logs/e0509_osc"
+    if args.soft:
+        log_dir = "./pen_grasp_rl/logs/e0509_osc_soft"
+    else:
+        log_dir = "./pen_grasp_rl/logs/e0509_osc"
     os.makedirs(log_dir, exist_ok=True)
 
     runner = OnPolicyRunner(
@@ -162,6 +178,7 @@ def main():
     print("=" * 70)
     print("E0509 OSC 환경 강화학습 시작 (Operational Space Control)")
     print("=" * 70)
+    print(f"  환경 모드: {env_mode}")
     print(f"  병렬 환경 수: {args.num_envs}")
     print(f"  최대 반복 횟수: {args.max_iterations}")
     print(f"  Learning Rate: {lr_mode}")
@@ -171,7 +188,8 @@ def main():
     print("=" * 70)
     print("OSC 핵심 특징:")
     print("  - 토크 제어 (set_joint_effort_target)")
-    print("  - 임피던스 제어 (motion_stiffness=150, damping_ratio=1.0)")
+    print(f"  - 임피던스 제어 (stiffness={env_cfg.osc_motion_stiffness}, damping_ratio={env_cfg.osc_motion_damping_ratio})")
+    print(f"  - action_scale: {env_cfg.action_scale}")
     print("  - 중력 보상 활성화")
     print("  - 관성 디커플링 활성화")
     print("=" * 70)

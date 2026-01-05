@@ -811,3 +811,26 @@ class E0509OSCEnvCfg_PLAY(E0509OSCEnvCfg):
 
     def __post_init__(self):
         self.scene.num_envs = 50
+
+
+@configclass
+class E0509OSCEnvCfg_Soft(E0509OSCEnvCfg):
+    """부드러운 동작을 위한 낮은 stiffness 설정
+
+    Sim2Real 전이 시 실제 로봇의 임피던스 특성에 맞춤
+    - stiffness: 150 → 60 (더 부드러운 반응)
+    - action_scale: 0.05 → 0.03 (더 작은 이동량)
+    """
+
+    # OSC 설정 (부드러운 동작)
+    osc_motion_stiffness = 60.0       # 150 → 60 (부드럽게)
+    osc_motion_damping_ratio = 1.0    # 임계 감쇠 유지
+    action_scale = 0.03               # 0.05 → 0.03 (더 작은 스텝)
+
+
+@configclass
+class E0509OSCEnvCfg_Soft_PLAY(E0509OSCEnvCfg_Soft):
+    """Soft 버전 테스트용"""
+
+    def __post_init__(self):
+        self.scene.num_envs = 50

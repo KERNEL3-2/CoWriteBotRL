@@ -35,49 +35,29 @@ app_launcher = AppLauncher(args)
 simulation_app = app_launcher.app
 
 import torch
+import torch.nn as nn
 from envs.e0509_osc_env import E0509OSCEnv, E0509OSCEnvCfg_PLAY
 
-from rsl_rl.runners import OnPolicyRunner
-
-from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
-from isaaclab.utils import configclass
-
 
 # =============================================================================
-# RSL-RL 설정 (학습 시 사용한 것과 동일해야 함)
+# 간단한 Actor 네트워크 (학습된 구조와 동일)
 # =============================================================================
-@configclass
-class E0509OSCPPORunnerCfg(RslRlOnPolicyRunnerCfg):
-    """E0509 OSC 환경 PPO 설정"""
-    seed = 42
-    device = "cuda:0"
-    num_steps_per_env = 24
-    max_iterations = 5000
-    save_interval = 100
-    experiment_name = "e0509_osc"
-    run_name = "osc_play"
+class SimpleActor(nn.Module):
+    def __init__(self, obs_dim, action_dim, hidden_dims=[256, 256, 128]):
+        super().__init__()
 
-    policy = RslRlPpoActorCriticCfg(
-        init_noise_std=0.2,
-        actor_hidden_dims=[256, 256, 128],
-        critic_hidden_dims=[256, 256, 128],
-        activation="elu",
-    )
+        layers = []
+        in_dim = obs_dim
+        for hidden_dim in hidden_dims:
+            layers.append(nn.Linear(in_dim, hidden_dim))
+            layers.append(nn.ELU())
+            in_dim = hidden_dim
+        layers.append(nn.Linear(in_dim, action_dim))
 
-    algorithm = RslRlPpoAlgorithmCfg(
-        value_loss_coef=1.0,
-        use_clipped_value_loss=True,
-        clip_param=0.2,
-        entropy_coef=0.01,
-        num_learning_epochs=5,
-        num_mini_batches=4,
-        learning_rate=3e-4,
-        schedule="adaptive",
-        gamma=0.99,
-        lam=0.95,
-        desired_kl=0.01,
-        max_grad_norm=1.0,
-    )
+        self.actor = nn.Sequential(*layers)
+
+    def forward(self, obs):
+        return self.actor(obs)
 
 
 def main():
@@ -90,23 +70,15 @@ def main():
     env_cfg.scene.num_envs = args.num_envs
 
     env = E0509OSCEnv(cfg=env_cfg)
-    env = RslRlVecEnvWrapper(env)
 
     # =============================================================================
-    # PPO 설정 및 Runner 생성
+    # 정책 네트워크 생성 및 체크포인트 로드
     # =============================================================================
-    agent_cfg = E0509OSCPPORunnerCfg()
+    obs_dim = env_cfg.observation_space
+    action_dim = env_cfg.action_space
 
-    runner = OnPolicyRunner(
-        env,
-        agent_cfg.to_dict(),
-        log_dir="./pen_grasp_rl/logs/e0509_osc_play",
-        device=agent_cfg.device,
-    )
+    policy = SimpleActor(obs_dim, action_dim, hidden_dims=[256, 256, 128]).to("cuda:0")
 
-    # =============================================================================
-    # 체크포인트 로드
-    # =============================================================================
     if not os.path.exists(args.checkpoint):
         print(f"오류: 체크포인트를 찾을 수 없습니다: {args.checkpoint}")
         env.close()
@@ -114,12 +86,17 @@ def main():
         return
 
     print(f"체크포인트 로드: {args.checkpoint}")
-    runner.load(args.checkpoint)
+    checkpoint = torch.load(args.checkpoint, map_location="cuda:0")
 
-    # =============================================================================
-    # 정책 가져오기
-    # =============================================================================
-    policy = runner.get_inference_policy(device=agent_cfg.device)
+    # Actor 가중치 추출 및 로드
+    actor_state_dict = {}
+    for key, value in checkpoint["model_state_dict"].items():
+        if key.startswith("actor."):
+            new_key = key.replace("actor.", "actor.")
+            actor_state_dict[new_key] = value
+
+    policy.load_state_dict(actor_state_dict)
+    policy.eval()
 
     # =============================================================================
     # 테스트 루프
@@ -128,19 +105,23 @@ def main():
     print("E0509 OSC 환경 테스트 시작")
     print("=" * 70)
     print(f"  환경 수: {args.num_envs}")
+    print(f"  관찰 차원: {obs_dim}")
+    print(f"  액션 차원: {action_dim}")
     print(f"  체크포인트: {args.checkpoint}")
     print("=" * 70)
     print("종료하려면 시뮬레이션 창을 닫으세요.")
     print("=" * 70)
 
-    obs, _ = env.get_observations()
+    obs_dict, _ = env.reset()
+    obs = obs_dict["policy"]
     step = 0
 
     while simulation_app.is_running():
         with torch.inference_mode():
             actions = policy(obs)
 
-        obs, _, dones, _ = env.step(actions)
+        obs_dict, rewards, terminated, truncated, infos = env.step(actions)
+        obs = obs_dict["policy"]
         step += 1
 
         # 통계 출력 (1000 스텝마다)

@@ -139,23 +139,109 @@ pen_grasp_rl/
 
 ---
 
-## 7. 다음 단계
+---
 
-1. OSC 환경 학습 실행
-   ```bash
-   source ~/isaacsim_env/bin/activate
-   cd ~/IsaacLab
-   python pen_grasp_rl/scripts/train_osc.py --headless --num_envs 4096
-   ```
+# 학습 실험 로그
 
-2. 학습된 모델 테스트
-   ```bash
-   python pen_grasp_rl/scripts/play_osc.py --checkpoint <모델경로>
-   ```
+## 실험 1: Default OSC (2025-01-05)
 
-3. Sim2Real 테스트
-   - 카메라로 펜 인식 후 범위 확인
-   - 정책 실행 전 위치/각도 유효성 검사
+### 설정
+| 파라미터 | 값 |
+|----------|-----|
+| stiffness | 150 |
+| damping_ratio | 1.0 |
+| action_scale | 0.05 |
+| Learning Rate | Fixed (1e-4) |
+| num_envs | 4096 |
+| iterations | 5500 |
+
+### 결과
+
+| 지표 | 시작 | 최종 | 비고 |
+|------|------|------|------|
+| Mean Reward | -228 | 6383 | 아주 좋음 |
+| Episode Length | 22 | 427 | 거의 최대(450) |
+| Dist to Cap | - | 3.7cm | 성공기준 3cm 근접 |
+| Perp Dist | - | 0.8cm | 성공기준 1cm **달성** |
+| Alignment (dot) | - | -0.74 | 좋음 (-1이 완벽) |
+| Total Success | 0 | 314,277회 | 많이 성공 |
+| Collision | - | ~0 | 충돌 거의 없음 |
+
+### 학습 그래프
+
+![OSC Training 5500 iter](images/osc_training_5500iter.png)
+
+### 분석
+1. **Mean Reward**: 초반 -86,000까지 폭락 후 빠르게 회복 → 6000대로 안정
+2. **Value Function Loss**: 초반 3억까지 발산 → 현재 1600~2000대 안정화 (진동 있으나 reward에 영향 없음)
+3. **거리 메트릭**: 캡까지 3.7cm, 축 정렬 0.8cm (성공 기준 달성)
+4. **에피소드 길이**: 450에 가까움 (끝까지 생존)
+
+### 문제점
+- 동작이 빠르고 급함 (stiffness=150이 높아서)
+- Sim2Real 시 실제 로봇 동작과 차이 예상
+
+### 모델 위치
+```
+/home/fhekwn549/e0509_osc/model_5500.pt
+```
+
+### 테스트 명령어
+```bash
+cd ~/IsaacLab
+python pen_grasp_rl/scripts/play_osc.py --checkpoint /home/fhekwn549/e0509_osc/model_5500.pt --num_envs 50
+```
+
+---
+
+## 실험 2: Soft OSC (예정)
+
+### 목표
+- 부드러운 동작으로 Sim2Real gap 최소화
+- 실제 로봇 임피던스 특성에 맞춤
+
+### 설정 변경
+| 파라미터 | Default | Soft | 이유 |
+|----------|---------|------|------|
+| stiffness | 150 | 60 | 더 부드러운 반응 |
+| action_scale | 0.05 | 0.03 | 더 작은 이동량 |
+| damping_ratio | 1.0 | 1.0 | 임계 감쇠 유지 |
+
+### 학습 명령어
+```bash
+# Docker 컨테이너 내에서 실행
+cd /workspace/isaaclab
+python3 pen_grasp_rl/scripts/train_osc.py --headless --num_envs 4096 --soft --fixed_lr
+```
+
+### 로그 위치
+```
+/workspace/isaaclab/pen_grasp_rl/logs/e0509_osc_soft/
+```
+
+### 결과
+(학습 후 기록 예정)
+
+---
+
+## stiffness 선택 가이드
+
+| stiffness | 특징 | 용도 |
+|-----------|------|------|
+| 150+ | 빠른 반응, 정확한 위치 | 시뮬레이션 전용 |
+| 60-100 | 부드러운 반응 | **Sim2Real 권장** |
+| 30-60 | 매우 부드러움 | 민감한 조작 |
+
+### 중요: 실제 로봇 속도 제한 vs 학습 stiffness
+
+**두 방식은 결과가 다릅니다!**
+
+| 방식 | 설명 | 결과 |
+|------|------|------|
+| 낮은 stiffness로 학습 | 정책이 부드러운 동작을 학습 | Sim2Real gap 적음 |
+| 실제 로봇 속도 제한만 | 정책은 빠른 동작, 로봇이 강제로 느림 | 타이밍 불일치, 예상치 못한 동작 |
+
+→ **Sim2Real 전이 시 학습 때 사용한 stiffness와 비슷한 값으로 실제 로봇 설정 권장**
 
 ---
 
