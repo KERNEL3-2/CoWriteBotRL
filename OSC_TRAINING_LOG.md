@@ -234,25 +234,52 @@ Soft 모드는 정렬 품질(dot)이 크게 저하되어 **실패**로 판정.
 
 ---
 
-## 실험 3: 개선된 Soft OSC (예정)
+## 실험 3: Soft + stiffness=100 (2025-01-05)
 
-### 개선 방향
+### 설정
+| 파라미터 | 값 |
+|----------|-----|
+| stiffness | 100 |
+| action_scale | 0.03 (--soft) |
+| hold_steps | 10 |
+| rew_scale_alignment | 10.0 |
+| num_envs | 8192 |
+| iterations | 5000 |
 
-**문제**: stiffness와 action_scale 동시 변경 → 학습 실패
-**해결**: 한 번에 하나씩만 변경
+### 결과
 
-### 권장 옵션
+| 지표 | Default | 이전 Soft | 실험 3 |
+|------|---------|-----------|--------|
+| Dot Mean | **-0.74** | -0.40 | **-0.42** |
+| Dist to Cap | 3.69cm | 4.31cm | 4.54cm |
+| Mean Reward | 6555 | 6041 | 6136 |
 
-| 옵션 | stiffness | action_scale | 예상 효과 |
-|------|-----------|--------------|----------|
-| **A (권장)** | 100 | 0.05 | stiffness만 적당히 낮춤 |
-| B | 80 | 0.05 | stiffness 더 낮춤 |
-| C | 150 | 0.03 | action_scale만 낮춤 |
+### 분석
+stiffness를 60→100으로 올렸지만 dot이 거의 개선되지 않음 (-0.40 → -0.42).
+action_scale=0.03이 직접적인 원인인지 불분명.
+
+### 비교 그래프
+![Soft Comparison](images/osc_soft_comparison.png)
+
+---
+
+## 실험 4: Default + 정렬 보상 강화 (예정)
+
+### 목표
+stiffness, action_scale은 Default 유지하고 정렬 보상만 강화해서 효과 검증
+
+### 설정
+| 파라미터 | Default | 실험 4 |
+|----------|---------|--------|
+| stiffness | 150 | 150 (동일) |
+| action_scale | 0.05 | 0.05 (동일) |
+| rew_scale_alignment | 5.0 | **10.0** |
+| num_envs | 4096 | 8192 |
 
 ### 학습 명령어
 ```bash
 cd /workspace/isaaclab
-python3 pen_grasp_rl/scripts/train_osc.py --headless --num_envs 8192 --stiffness 100 --fixed_lr --max_iterations 5000 --soft --hold_steps 10
+python3 pen_grasp_rl/scripts/train_osc.py --headless --num_envs 8192 --fixed_lr --max_iterations 5000
 ```
 
 ### 결과
