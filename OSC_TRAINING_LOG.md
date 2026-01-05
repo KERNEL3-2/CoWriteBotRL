@@ -181,15 +181,10 @@ pen_grasp_rl/
 - 동작이 빠르고 급함 (stiffness=150이 높아서)
 - Sim2Real 시 실제 로봇 동작과 차이 예상
 
-### 모델 위치
-```
-/home/fhekwn549/e0509_osc/model_5500.pt
-```
-
 ### 테스트 명령어
 ```bash
 cd ~/IsaacLab
-python pen_grasp_rl/scripts/play_osc.py --checkpoint /home/fhekwn549/e0509_osc/model_5500.pt --num_envs 50
+python pen_grasp_rl/scripts/play_osc.py --checkpoint <model_path> --num_envs 50
 ```
 
 ---
@@ -233,11 +228,6 @@ python pen_grasp_rl/scripts/play_osc.py --checkpoint /home/fhekwn549/e0509_osc/m
 
 **핵심 문제**: stiffness와 action_scale 두 파라미터를 동시에 변경하여 학습 난이도가 높아짐
 
-### 모델 위치
-```
-/home/fhekwn549/e0509_osc_soft/model_4999.pt
-```
-
 ### 결론
 Soft 모드는 정렬 품질(dot)이 크게 저하되어 **실패**로 판정.
 다음 실험에서 개선 필요.
@@ -259,10 +249,10 @@ Soft 모드는 정렬 품질(dot)이 크게 저하되어 **실패**로 판정.
 | B | 80 | 0.05 | stiffness 더 낮춤 |
 | C | 150 | 0.03 | action_scale만 낮춤 |
 
-### 학습 명령어 (옵션 A)
+### 학습 명령어
 ```bash
 cd /workspace/isaaclab
-python3 pen_grasp_rl/scripts/train_osc.py --headless --num_envs 4096 --stiffness 100 --fixed_lr
+python3 pen_grasp_rl/scripts/train_osc.py --headless --num_envs 8192 --stiffness 100 --fixed_lr --max_iterations 5000 --soft --hold_steps 10
 ```
 
 ### 결과
