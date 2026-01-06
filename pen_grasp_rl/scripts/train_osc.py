@@ -55,6 +55,7 @@ parser.add_argument("--soft", action="store_true", help="Soft 모드 (stiffness=
 parser.add_argument("--stiffness", type=float, default=None, help="OSC stiffness (Default: 150, Soft: 60)")
 parser.add_argument("--action_scale", type=float, default=None, help="Action scale (Default: 0.05, Soft: 0.03)")
 parser.add_argument("--hold_steps", type=int, default=None, help="성공 유지 스텝 (Default: 30, Soft: 10)")
+parser.add_argument("--log_dir", type=str, default=None, help="로그 저장 경로 (미지정 시 자동 설정)")
 
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
@@ -171,7 +172,9 @@ def main():
     # =============================================================================
     # Runner 생성
     # =============================================================================
-    if args.soft:
+    if args.log_dir:
+        log_dir = args.log_dir
+    elif args.soft:
         log_dir = "./pen_grasp_rl/logs/e0509_osc_soft"
     else:
         log_dir = "./pen_grasp_rl/logs/e0509_osc"

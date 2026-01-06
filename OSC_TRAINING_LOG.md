@@ -374,25 +374,65 @@ return rewards_clipped
 
 ---
 
-## 실험 5: Reward Clipping 적용 (예정)
+## 실험 5: 변수 분리 실험 - stiffness vs action_scale (2025-01-06)
 
-### 설정
-| 파라미터 | 실험 4 | 실험 5 |
-|----------|--------|--------|
-| stiffness | 150 | 150 (동일) |
-| action_scale | 0.05 | 0.05 (동일) |
-| rew_scale_alignment | 10.0 | 10.0 (동일) |
-| **reward_clip** | 없음 | **[-100, 100]** |
-| num_envs | 8192 | 8192 |
+### 배경
 
-### 학습 명령어
+Soft 모드에서 정렬(dot)이 나빠지는 원인 파악을 위한 변수 분리 실험.
+
+| 실험 | stiffness | action_scale | Dot Mean | 결과 |
+|------|-----------|--------------|----------|------|
+| Default | 150 | 0.05 | **-0.74** | 정렬 좋음 |
+| Soft | 60 | 0.03 | -0.40 | 정렬 나쁨 |
+| Soft + align강화 | 100 | 0.03 | -0.42 | 개선 안됨 |
+
+→ **alignment 강화는 효과 없음** 확인됨
+→ stiffness와 action_scale 중 **어떤 게 dot에 영향**을 주는지 확인 필요
+
+### 실험 5A: action_scale만 Default로 복원 (우선 실행)
+
+Sim2Real 목표(stiffness↓)를 유지하면서 정렬 개선 가능한지 확인.
+
+| 파라미터 | Default | Soft | 실험 5A |
+|----------|---------|------|---------|
+| stiffness | 150 | 60 | **60** (Soft 유지) |
+| action_scale | 0.05 | 0.03 | **0.05** (Default) |
+| reward_clip | - | - | [-100, 100] |
+
+**학습 명령어:**
 ```bash
 cd /workspace/isaaclab
-python3 pen_grasp_rl/scripts/train_osc.py --headless --num_envs 8192 --fixed_lr --max_iterations 10000
+python3 pen_grasp_rl/scripts/train_osc.py --headless --num_envs 4096 --stiffness 60 --action_scale 0.05 --fixed_lr --max_iterations 5000 --log_dir ./pen_grasp_rl/logs/exp_a_stiff60_action005
 ```
 
-### 결과
-(학습 후 기록 예정)
+**결과:** (학습 후 기록 예정)
+
+### 실험 5B: stiffness만 Default로 복원
+
+5A 실패 시 진행. action_scale이 아닌 stiffness가 원인인지 확인.
+
+| 파라미터 | Default | Soft | 실험 5B |
+|----------|---------|------|---------|
+| stiffness | 150 | 60 | **150** (Default) |
+| action_scale | 0.05 | 0.03 | **0.03** (Soft 유지) |
+| reward_clip | - | - | [-100, 100] |
+
+**학습 명령어:**
+```bash
+cd /workspace/isaaclab
+python3 pen_grasp_rl/scripts/train_osc.py --headless --num_envs 4096 --stiffness 150 --action_scale 0.03 --fixed_lr --max_iterations 5000 --log_dir ./pen_grasp_rl/logs/exp_b_stiff150_action003
+```
+
+**결과:** (학습 후 기록 예정)
+
+### 예상 결과 해석
+
+| 결과 | 의미 | Sim2Real 전망 |
+|------|------|---------------|
+| **5A에서 dot 개선** | action_scale이 원인 | ✓ 해결! (stiffness↓ 유지 가능) |
+| 5B에서 dot 개선 | stiffness가 원인 | ✗ 추가 해결책 필요 |
+| 둘 다 개선 | 둘 다 영향 | △ 부분 해결 |
+| 둘 다 안됨 | 상호작용 효과 | ✗ 복잡한 해결책 필요
 
 ---
 
