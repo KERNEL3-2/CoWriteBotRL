@@ -263,7 +263,7 @@ action_scale=0.03이 직접적인 원인인지 불분명.
 
 ---
 
-## 실험 4: Default + 정렬 보상 강화 (예정)
+## 실험 4: Default + 정렬 보상 강화 (2025-01-06)
 
 ### 목표
 stiffness, action_scale은 Default 유지하고 정렬 보상만 강화해서 효과 검증
@@ -276,10 +276,119 @@ stiffness, action_scale은 Default 유지하고 정렬 보상만 강화해서 �
 | rew_scale_alignment | 5.0 | **10.0** |
 | num_envs | 4096 | 8192 |
 
+### 결과: ⚠️ 발산 발생
+
+학습 중 **Step 7140 이후 발산** 발생하여 중단.
+
+| 지표 | 정상 구간 (6300~7139) | 발산 후 (7140~) |
+|------|----------------------|-----------------|
+| Mean Reward | ~7,000 | **-761,754** (최악) |
+| VF Loss | ~1,000 | **39억** (폭발) |
+| Dot Mean | -0.77 | -0.25 (악화) |
+| Success Hold | 0.32 | 0.01 (급락) |
+
+### 발산 분석 그래프
+
+![OSC 발산 분석](images/osc_divergence_analysis.png)
+
+### 발산 원인 분석
+
+1. **Value Function Loss 폭발이 주원인**
+   - Step 7140부터 VF Loss가 2,866,634로 급증
+   - 최대 **39.8억**까지 폭발
+   - 정상 수준: 100~1,000
+
+2. **발산 타임라인**
+   | Step | 이벤트 |
+   |------|--------|
+   | 6300~7139 | 정상 학습 (reward ~7000) |
+   | 7140 | VF Loss 폭발 시작 |
+   | 7149 | 첫 음수 reward (-1,458) |
+   | 7226 | 최악의 발산 (**-761,754**) |
+   | 7311 | 학습 중단 |
+
+3. **근본 원인**: Reward 스케일 불균형
+   - Reward 범위: -761,754 ~ +7,359 (너무 큼)
+   - Value Function이 이 범위를 추정하지 못함
+   - VF Loss 폭발 → 정책 업데이트 불안정 → 발산
+
+---
+
+## 해결책: Reward Clipping 적용 (2025-01-06)
+
+### Reward Clipping이란?
+
+보상값의 범위를 일정 구간으로 제한하는 기법.
+
+```
+문제 상황 (이전):
+  Reward: -761,754 ~ +7,359  (범위가 너무 큼)
+     ↓
+  Value Function이 이 큰 범위를 추정하려고 함
+     ↓
+  VF Loss 폭발 (39억까지)
+     ↓
+  정책 업데이트 불안정 → 발산
+
+Reward Clipping 적용 후:
+  Reward: -100 ~ +100 (범위 제한)
+     ↓
+  Value Function이 안정적으로 추정 가능
+     ↓
+  VF Loss 안정 유지
+     ↓
+  학습 안정화
+```
+
+### 코드 수정
+
+**1. Config 파라미터 추가** (`e0509_osc_env.py`)
+```python
+# Reward Clipping (발산 방지)
+reward_clip_min = -100.0
+reward_clip_max = 100.0
+```
+
+**2. `_get_rewards()` 함수에 clipping 적용**
+```python
+# Reward Clipping (발산 방지)
+rewards_clipped = torch.clamp(rewards, self.cfg.reward_clip_min, self.cfg.reward_clip_max)
+
+# 클리핑 발생 로깅 (디버깅용)
+clipped_count = ((rewards < self.cfg.reward_clip_min) | (rewards > self.cfg.reward_clip_max)).sum().item()
+if clipped_count > 0:
+    self.extras["log"]["Reward/clipped_count"] = float(clipped_count)
+    self.extras["log"]["Reward/raw_min"] = rewards.min().item()
+    self.extras["log"]["Reward/raw_max"] = rewards.max().item()
+
+return rewards_clipped
+```
+
+### 새로운 TensorBoard 메트릭
+
+| 메트릭 | 설명 |
+|--------|------|
+| `Reward/clipped_count` | 클리핑된 환경 수 |
+| `Reward/raw_min` | 클리핑 전 최소값 |
+| `Reward/raw_max` | 클리핑 전 최대값 |
+
+---
+
+## 실험 5: Reward Clipping 적용 (예정)
+
+### 설정
+| 파라미터 | 실험 4 | 실험 5 |
+|----------|--------|--------|
+| stiffness | 150 | 150 (동일) |
+| action_scale | 0.05 | 0.05 (동일) |
+| rew_scale_alignment | 10.0 | 10.0 (동일) |
+| **reward_clip** | 없음 | **[-100, 100]** |
+| num_envs | 8192 | 8192 |
+
 ### 학습 명령어
 ```bash
 cd /workspace/isaaclab
-python3 pen_grasp_rl/scripts/train_osc.py --headless --num_envs 8192 --fixed_lr --max_iterations 5000
+python3 pen_grasp_rl/scripts/train_osc.py --headless --num_envs 8192 --fixed_lr --max_iterations 10000
 ```
 
 ### 결과

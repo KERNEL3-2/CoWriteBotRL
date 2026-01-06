@@ -189,6 +189,14 @@ class E0509OSCEnvCfg(DirectRLEnvCfg):
     rew_scale_collision = -50.0  # 충돌 페널티 강화
 
     # ==========================================================================
+    # Reward Clipping (발산 방지)
+    # ==========================================================================
+    # VF Loss 폭발을 방지하기 위해 reward 범위 제한
+    # 정상 학습 시 reward ~7000 이므로 [-100, 100]으로 정규화
+    reward_clip_min = -100.0
+    reward_clip_max = 100.0
+
+    # ==========================================================================
     # 성공 조건
     # ==========================================================================
     success_dist_to_cap = 0.03     # 캡까지 거리 < 3cm
@@ -670,7 +678,20 @@ class E0509OSCEnv(DirectRLEnv):
                   f"collision={collision_cnt}", flush=True)
             print(f"    → dot분포: 우수(<-0.9)={dot_excellent:.1f}%, 불량(>-0.5)={dot_poor:.1f}%", flush=True)
 
-        return rewards
+        # ==========================================================================
+        # Reward Clipping (발산 방지)
+        # ==========================================================================
+        # VF Loss 폭발을 방지하기 위해 reward 범위 제한
+        rewards_clipped = torch.clamp(rewards, self.cfg.reward_clip_min, self.cfg.reward_clip_max)
+
+        # 클리핑 발생 로깅 (디버깅용)
+        clipped_count = ((rewards < self.cfg.reward_clip_min) | (rewards > self.cfg.reward_clip_max)).sum().item()
+        if clipped_count > 0:
+            self.extras["log"]["Reward/clipped_count"] = float(clipped_count)
+            self.extras["log"]["Reward/raw_min"] = rewards.min().item()
+            self.extras["log"]["Reward/raw_max"] = rewards.max().item()
+
+        return rewards_clipped
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         """종료 조건"""
