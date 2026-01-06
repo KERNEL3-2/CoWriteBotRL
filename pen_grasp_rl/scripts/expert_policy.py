@@ -148,12 +148,15 @@ class ExpertPolicy:
         # 목표 위치 계산 (페이즈별)
         actions = torch.zeros(self.num_envs, 3, device=self.device)
 
-        # 페이즈 0: 캡 위 접근 높이로 이동
+        # 월드 Z축 (위 방향)
+        world_up = torch.tensor([0.0, 0.0, 1.0], device=self.device).expand(self.num_envs, 3)
+
+        # 페이즈 0: 캡 위 (월드 Z 방향) 접근 높이로 이동
         phase0_mask = self.phase == 0
         if phase0_mask.any():
-            # 캡 위 approach_height 지점
-            target_offset = pen_z * self.approach_height
-            target_pos = cap_pos + target_offset
+            # 캡 바로 위 (월드 Z 방향으로 approach_height)
+            target_pos = cap_pos.clone()
+            target_pos[:, 2] = target_pos[:, 2] + self.approach_height
             direction = target_pos - grasp_pos
 
             # 정규화 및 스케일링
@@ -167,12 +170,12 @@ class ExpertPolicy:
             close_enough = dist.squeeze(-1) < self.approach_threshold
             self.phase[phase0_mask & close_enough] = 1
 
-        # 페이즈 1: 캡으로 하강
+        # 페이즈 1: 캡으로 하강 (XY는 유지, Z만 내려감)
         phase1_mask = self.phase == 1
         if phase1_mask.any():
-            # 캡 바로 위 (약간 위)
-            target_offset = pen_z * 0.01  # 1cm 위
-            target_pos = cap_pos + target_offset
+            # 캡 위치로 직접 이동 (약간 위)
+            target_pos = cap_pos.clone()
+            target_pos[:, 2] = target_pos[:, 2] + 0.01  # 1cm 위
             direction = target_pos - grasp_pos
 
             dist = torch.norm(direction, dim=-1, keepdim=True)
@@ -486,18 +489,11 @@ def main():
     # 환경 생성
     env = E0509OSCEnv(cfg)
 
-    # 전문가 정책 생성
-    # expert = ExpertPolicy(
-    #     num_envs=args.num_envs,
-    #     device=env.device,
-    #     approach_height=args.approach_height,
-    #     move_speed=args.move_speed,
-    # )
-
-    # 단순 버전 사용
-    expert = SimpleExpertPolicy(
+    # 3단계 전문가 정책 (충돌 회피)
+    expert = ExpertPolicy(
         num_envs=args.num_envs,
         device=env.device,
+        approach_height=args.approach_height,
         move_speed=args.move_speed,
     )
 
