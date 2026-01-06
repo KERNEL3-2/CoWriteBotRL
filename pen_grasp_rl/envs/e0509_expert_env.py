@@ -26,6 +26,8 @@ from isaaclab.utils.math import sample_uniform
 from isaaclab.actuators import ImplicitActuatorCfg
 
 import isaaclab.utils.math as math_utils
+from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+from isaaclab.markers.config import FRAME_MARKER_CFG, BLUE_ARROW_X_MARKER_CFG
 
 
 # =============================================================================
@@ -172,6 +174,61 @@ class E0509ExpertEnv(DirectRLEnv):
 
         # IK 관련
         self._setup_ik()
+
+        # 시각화 마커 설정
+        self._setup_markers()
+
+    def _setup_markers(self):
+        """디버그 시각화 마커 설정"""
+        # Grasp point 마커 (녹색 구)
+        grasp_marker_cfg = VisualizationMarkersCfg(
+            prim_path="/Visuals/GraspMarker",
+            markers={
+                "grasp": sim_utils.SphereCfg(
+                    radius=0.015,
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+                ),
+            },
+        )
+        self._grasp_marker = VisualizationMarkers(grasp_marker_cfg)
+
+        # Pen cap 마커 (빨간 구)
+        cap_marker_cfg = VisualizationMarkersCfg(
+            prim_path="/Visuals/CapMarker",
+            markers={
+                "cap": sim_utils.SphereCfg(
+                    radius=0.015,
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+                ),
+            },
+        )
+        self._cap_marker = VisualizationMarkers(cap_marker_cfg)
+
+        # 접근 목표 마커 (파란 구)
+        approach_marker_cfg = VisualizationMarkersCfg(
+            prim_path="/Visuals/ApproachMarker",
+            markers={
+                "approach": sim_utils.SphereCfg(
+                    radius=0.01,
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
+                ),
+            },
+        )
+        self._approach_marker = VisualizationMarkers(approach_marker_cfg)
+
+    def _update_markers(self):
+        """마커 위치 업데이트"""
+        grasp_pos = self._get_grasp_point()
+        cap_pos = self._get_pen_cap_pos()
+        pen_z = self._get_pen_z_axis()
+        approach_pos = cap_pos - pen_z * 0.05  # 접근 위치 (캡에서 5cm)
+
+        # 마커 업데이트
+        grasp_quat = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=self.device).expand(self.num_envs, -1)
+
+        self._grasp_marker.visualize(grasp_pos, grasp_quat)
+        self._cap_marker.visualize(cap_pos, grasp_quat)
+        self._approach_marker.visualize(approach_pos, grasp_quat)
 
     def _setup_scene(self):
         """씬 구성"""
@@ -339,6 +396,9 @@ class E0509ExpertEnv(DirectRLEnv):
         ], dim=-1)  # 총 30
 
         self.prev_distance_to_cap = distance_to_cap.clone()
+
+        # 시각화 마커 업데이트
+        self._update_markers()
 
         return {"policy": obs}
 
