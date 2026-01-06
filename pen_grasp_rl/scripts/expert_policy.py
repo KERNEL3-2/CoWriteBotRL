@@ -81,16 +81,16 @@ class ExpertPolicy:
     - Phase 2: 캡 위치 유지
     """
 
-    # 관측값 인덱스 (e0509_expert_env 기준)
+    # 관측값 인덱스 (e0509_ik_env_v7 기준 - 27차원)
     OBS_JOINT_POS = slice(0, 6)
     OBS_JOINT_VEL = slice(6, 12)
     OBS_GRASP_POS = slice(12, 15)
     OBS_CAP_POS = slice(15, 18)
     OBS_REL_POS = slice(18, 21)
     OBS_PEN_Z = slice(21, 24)
-    OBS_DIST_TO_CAP = 24
-    OBS_APPROACH_DIR = slice(25, 28)  # 접근 방향 (-pen_z)
-    OBS_APPROACH_DIST = 28            # 축 방향 거리
+    OBS_PERP_DIST = 24
+    OBS_DIST_TO_CAP = 25
+    OBS_PHASE = 26
 
     def __init__(
         self,
@@ -143,7 +143,7 @@ class ExpertPolicy:
         cap_pos = obs_tensor[:, self.OBS_CAP_POS]        # 캡 위치
         rel_pos = obs_tensor[:, self.OBS_REL_POS]        # 캡까지 상대 위치
         pen_z = obs_tensor[:, self.OBS_PEN_Z]            # 펜 축 방향
-        approach_dir = obs_tensor[:, self.OBS_APPROACH_DIR]  # 접근 방향 (-pen_z)
+        approach_dir = -pen_z  # 접근 방향 = -펜 축 (캡에서 멀어지는 방향)
 
         # 목표 위치 계산 (페이즈별)
         actions = torch.zeros(self.num_envs, 3, device=self.device)
@@ -470,14 +470,14 @@ def collect_trajectories(env, expert, num_episodes: int = 1000, output_path: str
 
 def main():
     """메인 함수"""
-    # 환경 설정 (전문가 궤적용 IK 환경)
+    # 환경 설정 (전문가 환경 사용 - IK v7 기반 + 마커)
     if args.mode == "play":
         cfg = E0509ExpertEnvCfg_PLAY()
     else:
         cfg = E0509ExpertEnvCfg()
 
     cfg.scene.num_envs = args.num_envs
-    print(f"E0509ExpertEnv 사용 (IK 기반, 펜 축 접근)")
+    print(f"E0509ExpertEnv 사용 (IK 기반 + 마커)")
 
     # 환경 생성
     env = E0509ExpertEnv(cfg)
