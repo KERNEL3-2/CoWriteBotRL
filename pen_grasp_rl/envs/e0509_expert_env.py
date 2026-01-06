@@ -268,6 +268,11 @@ class E0509ExpertEnv(DirectRLEnv):
         # Jacobian 인덱스 (그리퍼 베이스 사용)
         self._jacobi_body_idx = self._ee_body_idx - 1
 
+        # 목표 포즈 저장
+        self._target_pos = torch.zeros(self.num_envs, 3, device=self.device)
+        self._target_quat = torch.zeros(self.num_envs, 4, device=self.device)
+        self._target_quat[:, 0] = 1.0  # 단위 쿼터니언
+
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         """물리 시뮬레이션 전 처리"""
         self.actions = actions.clone()
@@ -290,13 +295,13 @@ class E0509ExpertEnv(DirectRLEnv):
         # 목표 자세: 펜 축 기반 자동 계산
         target_quat = self._compute_auto_orientation()
 
-        # 상대 회전
+        # 상대 회전 (axis-angle)
         quat_curr_inv = math_utils.quat_inv(ee_quat_b)
         quat_delta = math_utils.quat_mul(target_quat, quat_curr_inv)
         rot_delta = math_utils.axis_angle_from_quat(quat_delta) * 0.5
 
-        # IK 명령
-        ik_command = torch.cat([pos_delta, rot_delta], dim=-1)
+        # IK 명령: 상대 위치 + 상대 회전
+        command = torch.cat([pos_delta, rot_delta], dim=-1)
 
         # Jacobian
         jacobian_w = self.robot.root_physx_view.get_jacobians()[
@@ -310,8 +315,8 @@ class E0509ExpertEnv(DirectRLEnv):
         # 현재 관절 위치
         joint_pos = self.robot.data.joint_pos[:, self._arm_joint_ids]
 
-        # IK 계산
-        self._ik_controller.set_command(ik_command)
+        # IK 계산 - 상대 위치/회전 명령 설정
+        self._ik_controller.set_command(command, ee_pos=ee_pos_b, ee_quat=ee_quat_b)
         joint_pos_target = self._ik_controller.compute(
             ee_pos_b, ee_quat_b, jacobian_b, joint_pos
         )
