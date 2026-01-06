@@ -108,7 +108,7 @@ class E0509ExpertEnvCfg(DirectRLEnvCfg):
                 damping=80.0,
             ),
             "gripper": ImplicitActuatorCfg(
-                joint_names_expr=["L_.*", "R_.*"],
+                joint_names_expr=["gripper_rh_.*"],
                 effort_limit=10.0,
                 velocity_limit=1.0,
                 stiffness=2000.0,
