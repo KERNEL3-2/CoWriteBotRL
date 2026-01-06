@@ -66,6 +66,13 @@ simulation_app = app_launcher.app
 from envs.e0509_osc_env import E0509OSCEnv, E0509OSCEnvCfg, E0509OSCEnvCfg_Soft
 
 
+def extract_obs(obs):
+    """관측값에서 텐서 추출 (딕셔너리 또는 텐서 지원)"""
+    if isinstance(obs, dict):
+        return obs.get("policy", obs.get("obs", list(obs.values())[0]))
+    return obs
+
+
 class ExpertPolicy:
     """
     규칙 기반 전문가 정책
@@ -118,22 +125,25 @@ class ExpertPolicy:
         else:
             self.phase[env_ids] = 0
 
-    def get_action(self, obs: torch.Tensor) -> torch.Tensor:
+    def get_action(self, obs) -> torch.Tensor:
         """
         관측값에서 행동 계산
 
         Args:
-            obs: (num_envs, 27) 관측값
+            obs: (num_envs, 27) 관측값 또는 딕셔너리
 
         Returns:
             action: (num_envs, 3) 위치 변화량 [Δx, Δy, Δz]
         """
+        # 관측값 추출
+        obs_tensor = extract_obs(obs)
+
         # 관측값 파싱
-        grasp_pos = obs[:, self.OBS_GRASP_POS]  # 현재 그립 위치
-        cap_pos = obs[:, self.OBS_CAP_POS]      # 캡 위치
-        rel_pos = obs[:, self.OBS_REL_POS]      # 캡까지 상대 위치
-        pen_z = obs[:, self.OBS_PEN_Z]          # 펜 축 방향
-        dist_to_cap = obs[:, self.OBS_DIST_TO_CAP]  # 캡까지 거리
+        grasp_pos = obs_tensor[:, self.OBS_GRASP_POS]  # 현재 그립 위치
+        cap_pos = obs_tensor[:, self.OBS_CAP_POS]      # 캡 위치
+        rel_pos = obs_tensor[:, self.OBS_REL_POS]      # 캡까지 상대 위치
+        pen_z = obs_tensor[:, self.OBS_PEN_Z]          # 펜 축 방향
+        dist_to_cap = obs_tensor[:, self.OBS_DIST_TO_CAP]  # 캡까지 거리
 
         # 목표 위치 계산 (페이즈별)
         actions = torch.zeros(self.num_envs, 3, device=self.device)
@@ -212,9 +222,10 @@ class SimpleExpertPolicy:
     def reset(self, env_ids: torch.Tensor = None):
         pass  # 상태 없음
 
-    def get_action(self, obs: torch.Tensor) -> torch.Tensor:
+    def get_action(self, obs) -> torch.Tensor:
         """캡 방향으로 직선 이동"""
-        rel_pos = obs[:, self.OBS_REL_POS]  # 캡까지 상대 위치
+        obs_tensor = extract_obs(obs)
+        rel_pos = obs_tensor[:, self.OBS_REL_POS]  # 캡까지 상대 위치
         dist = torch.norm(rel_pos, dim=-1, keepdim=True)
 
         # 정규화된 방향
@@ -253,7 +264,8 @@ def play_expert(env, expert, max_steps: int = 500):
 
             # 상태 출력 (10 스텝마다)
             if step % 10 == 0:
-                dist = obs[0, 25].item()  # distance_to_cap
+                obs_tensor = extract_obs(obs)
+                dist = obs_tensor[0, 25].item()  # distance_to_cap
                 print(f"\r에피소드 {episode+1} | 스텝 {step} | 거리: {dist:.3f}m", end="", flush=True)
 
             # 에피소드 종료 처리
@@ -369,8 +381,9 @@ def collect_trajectories(env, expert, num_episodes: int = 1000, output_path: str
         action = expert.get_action(obs)
 
         # 현재 상태 저장
+        obs_tensor = extract_obs(obs)
         for i in range(env.num_envs):
-            episode_obs[i].append(obs[i].cpu().clone())
+            episode_obs[i].append(obs_tensor[i].cpu().clone())
             episode_actions[i].append(action[i].cpu().clone())
 
         # 환경 스텝
