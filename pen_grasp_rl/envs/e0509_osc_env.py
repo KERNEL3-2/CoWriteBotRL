@@ -570,9 +570,11 @@ class E0509OSCEnv(DirectRLEnv):
         progress = self.prev_distance_to_cap - distance_to_cap
         rewards += self.cfg.rew_scale_approach_progress * torch.clamp(progress * 50, min=0, max=1)
 
-        # 자세 정렬 보상
-        alignment_reward = (-dot - 0.5) * 0.5
-        alignment_reward = torch.clamp(alignment_reward, min=0)
+        # 자세 정렬 보상 (전 범위에서 그라디언트 제공)
+        # dot = -1 (완벽 정렬) → reward = 1.0
+        # dot = 0 (수직) → reward = 0.0
+        # dot = +1 (반대 방향) → reward = -1.0 (페널티)
+        alignment_reward = -dot  # 단순하고 전 범위에서 학습 신호 제공
         rewards += self.cfg.rew_scale_alignment * alignment_reward
 
         # 캡 위에 있을 때 보너스
