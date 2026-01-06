@@ -158,8 +158,14 @@ class E0509ExpertEnv(DirectRLEnv):
         self._arm_joint_ids = list(range(6))
         self._gripper_joint_ids = list(range(6, 10))
 
-        # EE 바디 인덱스
-        self._ee_body_idx = self.robot.find_bodies("grasp_point")[0][0]
+        # EE 바디 인덱스 (그리퍼 베이스 사용)
+        self._ee_body_idx = self.robot.find_bodies("gripper_rh_p12_rn_base")[0][0]
+
+        # 손가락 바디 인덱스
+        self._finger_l1_idx = self.robot.find_bodies("gripper_rh_p12_rn_l1")[0][0]
+        self._finger_r1_idx = self.robot.find_bodies("gripper_rh_p12_rn_r1")[0][0]
+        self._finger_l2_idx = self.robot.find_bodies("gripper_rh_p12_rn_l2")[0][0]
+        self._finger_r2_idx = self.robot.find_bodies("gripper_rh_p12_rn_r2")[0][0]
 
         # EE 오프셋
         self._ee_offset_pos = torch.zeros(3, device=self.device)
@@ -357,8 +363,23 @@ class E0509ExpertEnv(DirectRLEnv):
         return pen_pos + pen_z * (PEN_LENGTH / 2)
 
     def _get_grasp_point(self) -> torch.Tensor:
-        """그립 포인트 위치"""
-        return self.robot.data.body_pos_w[:, self._ee_body_idx]
+        """그립 포인트 위치 (손가락 중심)"""
+        # 손가락 위치
+        l1 = self.robot.data.body_pos_w[:, self._finger_l1_idx]
+        r1 = self.robot.data.body_pos_w[:, self._finger_r1_idx]
+        l2 = self.robot.data.body_pos_w[:, self._finger_l2_idx]
+        r2 = self.robot.data.body_pos_w[:, self._finger_r2_idx]
+
+        # 베이스 중심과 팁 중심
+        base_center = (l1 + r1) / 2.0
+        tip_center = (l2 + r2) / 2.0
+
+        # 손가락 방향
+        finger_dir = tip_center - base_center
+        finger_dir = finger_dir / (torch.norm(finger_dir, dim=-1, keepdim=True) + 1e-6)
+
+        # 베이스에서 2cm 앞 (팁 방향)
+        return base_center + finger_dir * 0.02
 
     def _get_observations(self) -> dict:
         """관찰값 계산"""
