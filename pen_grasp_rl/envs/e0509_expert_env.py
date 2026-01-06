@@ -265,8 +265,8 @@ class E0509ExpertEnv(DirectRLEnv):
         )
         self._ik_controller = DifferentialIKController(ik_cfg, num_envs=self.num_envs, device=self.device)
 
-        # Jacobian 인덱스
-        self._jacobi_body_idx = self.robot.find_bodies("grasp_point")[0][0] - 1
+        # Jacobian 인덱스 (그리퍼 베이스 사용)
+        self._jacobi_body_idx = self._ee_body_idx - 1
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         """물리 시뮬레이션 전 처리"""
