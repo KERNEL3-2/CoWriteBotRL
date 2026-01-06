@@ -47,8 +47,6 @@ parser.add_argument("--approach_height", type=float, default=0.05,
                     help="접근 높이 (m)")
 parser.add_argument("--move_speed", type=float, default=0.8,
                     help="이동 속도 스케일 (0-1)")
-parser.add_argument("--soft", action="store_true",
-                    help="SoftOSCEnvCfg 사용 (stiffness=60)")
 
 # AppLauncher 인자 추가
 AppLauncher.add_app_launcher_args(parser)
@@ -63,7 +61,7 @@ app_launcher = AppLauncher(args)
 simulation_app = app_launcher.app
 
 # Isaac Lab 임포트 (시뮬레이션 시작 후)
-from envs.e0509_osc_env import E0509OSCEnv, E0509OSCEnvCfg, E0509OSCEnvCfg_Soft
+from envs.e0509_expert_env import E0509ExpertEnv, E0509ExpertEnvCfg, E0509ExpertEnvCfg_PLAY
 
 
 def extract_obs(obs):
@@ -75,22 +73,24 @@ def extract_obs(obs):
 
 class ExpertPolicy:
     """
-    규칙 기반 전문가 정책
+    규칙 기반 전문가 정책 (펜 축 기준 접근)
 
-    관측값에서 펜 캡 위치를 읽어 직선으로 이동합니다.
-    자세 정렬은 OSC 환경에서 자동으로 처리됩니다.
+    IK 환경처럼 펜 축 방향으로 접근합니다.
+    - Phase 0: 펜 축 방향 접근 위치로 이동
+    - Phase 1: 펜 축 따라 캡으로 이동
+    - Phase 2: 캡 위치 유지
     """
 
-    # 관측값 인덱스
+    # 관측값 인덱스 (e0509_expert_env 기준)
     OBS_JOINT_POS = slice(0, 6)
     OBS_JOINT_VEL = slice(6, 12)
     OBS_GRASP_POS = slice(12, 15)
     OBS_CAP_POS = slice(15, 18)
     OBS_REL_POS = slice(18, 21)
     OBS_PEN_Z = slice(21, 24)
-    OBS_PERP_DIST = 24
-    OBS_DIST_TO_CAP = 25
-    OBS_PHASE = 26
+    OBS_DIST_TO_CAP = 24
+    OBS_APPROACH_DIR = slice(25, 28)  # 접근 방향 (-pen_z)
+    OBS_APPROACH_DIST = 28            # 축 방향 거리
 
     def __init__(
         self,
@@ -127,10 +127,10 @@ class ExpertPolicy:
 
     def get_action(self, obs) -> torch.Tensor:
         """
-        관측값에서 행동 계산
+        관측값에서 행동 계산 (펜 축 기준 접근)
 
         Args:
-            obs: (num_envs, 27) 관측값 또는 딕셔너리
+            obs: 관측값 (딕셔너리 또는 텐서)
 
         Returns:
             action: (num_envs, 3) 위치 변화량 [Δx, Δy, Δz]
@@ -139,64 +139,58 @@ class ExpertPolicy:
         obs_tensor = extract_obs(obs)
 
         # 관측값 파싱
-        grasp_pos = obs_tensor[:, self.OBS_GRASP_POS]  # 현재 그립 위치
-        cap_pos = obs_tensor[:, self.OBS_CAP_POS]      # 캡 위치
-        rel_pos = obs_tensor[:, self.OBS_REL_POS]      # 캡까지 상대 위치
-        pen_z = obs_tensor[:, self.OBS_PEN_Z]          # 펜 축 방향
-        dist_to_cap = obs_tensor[:, self.OBS_DIST_TO_CAP]  # 캡까지 거리
+        grasp_pos = obs_tensor[:, self.OBS_GRASP_POS]    # 현재 그립 위치
+        cap_pos = obs_tensor[:, self.OBS_CAP_POS]        # 캡 위치
+        rel_pos = obs_tensor[:, self.OBS_REL_POS]        # 캡까지 상대 위치
+        pen_z = obs_tensor[:, self.OBS_PEN_Z]            # 펜 축 방향
+        approach_dir = obs_tensor[:, self.OBS_APPROACH_DIR]  # 접근 방향 (-pen_z)
 
         # 목표 위치 계산 (페이즈별)
         actions = torch.zeros(self.num_envs, 3, device=self.device)
 
-        # 월드 Z축 (위 방향)
-        world_up = torch.tensor([0.0, 0.0, 1.0], device=self.device).expand(self.num_envs, 3)
-
-        # 페이즈 0: 캡 위 (월드 Z 방향) 접근 높이로 이동
+        # 페이즈 0: 펜 축 방향 접근 위치로 이동
+        # 캡에서 approach_height 만큼 떨어진 위치 (펜 축 방향)
         phase0_mask = self.phase == 0
         if phase0_mask.any():
-            # 캡 바로 위 (월드 Z 방향으로 approach_height)
-            target_pos = cap_pos.clone()
-            target_pos[:, 2] = target_pos[:, 2] + self.approach_height
+            # 접근 위치: 캡 + approach_dir * approach_height
+            target_pos = cap_pos + approach_dir * self.approach_height
             direction = target_pos - grasp_pos
 
-            # 정규화 및 스케일링
             dist = torch.norm(direction, dim=-1, keepdim=True)
             direction_norm = direction / (dist + 1e-6)
 
-            # 행동: 목표 방향으로 이동
             actions[phase0_mask] = (direction_norm * self.move_speed)[phase0_mask]
 
-            # 페이즈 전환 체크
+            # 페이즈 전환: 접근 위치에 도착
             close_enough = dist.squeeze(-1) < self.approach_threshold
             self.phase[phase0_mask & close_enough] = 1
 
-        # 페이즈 1: 캡으로 하강 (XY는 유지, Z만 내려감)
+        # 페이즈 1: 펜 축 따라 캡으로 이동
         phase1_mask = self.phase == 1
         if phase1_mask.any():
-            # 캡 위치로 직접 이동 (약간 위)
-            target_pos = cap_pos.clone()
-            target_pos[:, 2] = target_pos[:, 2] + 0.01  # 1cm 위
-            direction = target_pos - grasp_pos
+            # 캡 방향으로 이동 (펜 축 따라)
+            # approach_dir의 반대 방향이 캡 방향
+            move_dir = -approach_dir  # pen_z 방향
 
-            dist = torch.norm(direction, dim=-1, keepdim=True)
-            direction_norm = direction / (dist + 1e-6)
+            # 캡까지 거리 확인
+            dist_to_cap = torch.norm(rel_pos, dim=-1, keepdim=True)
 
-            # 하강 시 더 천천히
-            actions[phase1_mask] = (direction_norm * self.move_speed * 0.5)[phase1_mask]
+            # 속도 조절: 가까우면 천천히
+            speed_scale = torch.clamp(dist_to_cap / 0.05, min=0.3, max=1.0)
 
-            # 페이즈 전환 체크
-            close_enough = dist.squeeze(-1) < self.descend_threshold
+            actions[phase1_mask] = (move_dir * self.move_speed * 0.5 * speed_scale)[phase1_mask]
+
+            # 페이즈 전환: 캡 근처 도착
+            close_enough = dist_to_cap.squeeze(-1) < self.descend_threshold
             self.phase[phase1_mask & close_enough] = 2
 
         # 페이즈 2: 캡 위치 유지 (성공 조건 만족)
         phase2_mask = self.phase == 2
         if phase2_mask.any():
             # 캡으로 미세 조정
-            direction = rel_pos  # 캡까지 상대 위치
-            dist = torch.norm(direction, dim=-1, keepdim=True)
-            direction_norm = direction / (dist + 1e-6)
+            dist = torch.norm(rel_pos, dim=-1, keepdim=True)
+            direction_norm = rel_pos / (dist + 1e-6)
 
-            # 아주 천천히 미세 조정
             actions[phase2_mask] = (direction_norm * self.move_speed * 0.2)[phase2_mask]
 
         return actions
@@ -476,20 +470,19 @@ def collect_trajectories(env, expert, num_episodes: int = 1000, output_path: str
 
 def main():
     """메인 함수"""
-    # 환경 설정
-    if args.soft:
-        cfg = E0509OSCEnvCfg_Soft()
-        print("E0509OSCEnvCfg_Soft 사용 (stiffness=60)")
+    # 환경 설정 (전문가 궤적용 IK 환경)
+    if args.mode == "play":
+        cfg = E0509ExpertEnvCfg_PLAY()
     else:
-        cfg = E0509OSCEnvCfg()
-        print("E0509OSCEnvCfg 사용 (stiffness=150)")
+        cfg = E0509ExpertEnvCfg()
 
     cfg.scene.num_envs = args.num_envs
+    print(f"E0509ExpertEnv 사용 (IK 기반, 펜 축 접근)")
 
     # 환경 생성
-    env = E0509OSCEnv(cfg)
+    env = E0509ExpertEnv(cfg)
 
-    # 3단계 전문가 정책 (충돌 회피)
+    # 펜 축 기준 전문가 정책
     expert = ExpertPolicy(
         num_envs=args.num_envs,
         device=env.device,
