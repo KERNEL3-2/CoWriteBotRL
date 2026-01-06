@@ -63,7 +63,7 @@ app_launcher = AppLauncher(args)
 simulation_app = app_launcher.app
 
 # Isaac Lab 임포트 (시뮬레이션 시작 후)
-from envs.e0509_osc_env import E0509OSCEnv, E0509OSCEnvCfg, SoftOSCEnvCfg
+from envs.e0509_osc_env import E0509OSCEnv, E0509OSCEnvCfg, E0509OSCEnvCfg_Soft
 
 
 class ExpertPolicy:
@@ -462,8 +462,8 @@ def main():
     """메인 함수"""
     # 환경 설정
     if args.soft:
-        cfg = SoftOSCEnvCfg()
-        print("SoftOSCEnvCfg 사용 (stiffness=60)")
+        cfg = E0509OSCEnvCfg_Soft()
+        print("E0509OSCEnvCfg_Soft 사용 (stiffness=60)")
     else:
         cfg = E0509OSCEnvCfg()
         print("E0509OSCEnvCfg 사용 (stiffness=150)")
