@@ -11,12 +11,12 @@ E0509 OSC 환경 (Operational Space Control)
 - 제어: 임피던스 기반 토크 제어 (Sim2Real 친화적)
 - GRASP 제거: 실제 로봇에서 별도 처리
 
-=== 성공 조건 (V2 수정) ===
-- 캡까지 거리 < 7cm (기존 3cm → 7cm)
+=== 성공 조건 (V3 수정) ===
+- axis_distance ≈ -7cm (캡 위 7cm 목표, ±2cm 허용)
 - 펜 축 정렬 (perp_dist < 1cm)
 - 캡 위에 있음 (on_correct_side)
-- 30 스텝 유지
-- 7cm 이하 접근 시 패널티 (너무 가까이 가지 않도록)
+- 10 스텝 유지
+- 목표보다 가까이 가면 패널티 (axis_distance 기반)
 
 === 관절 제한 (DART platform 기준) ===
 - J1: ±360°
@@ -181,19 +181,28 @@ class E0509OSCEnvCfg(DirectRLEnvCfg):
     ee_offset_pos = [0.0, 0.0, 0.15]
 
     # ==========================================================================
-    # 보상 스케일
+    # 보상 스케일 (V3: axis_distance 기반 목표 거리)
     # ==========================================================================
-    rew_scale_dist_to_cap = -15.0
-    rew_scale_dist_exp = 10.0
-    rew_scale_perp_dist = -8.0
-    rew_scale_perp_exp = 5.0
-    rew_scale_approach_progress = 3.0
+    # 목표: 펜 축 위에서 캡으로부터 7cm 거리 유지
+    target_axis_distance = -0.07  # 캡 위 7cm (음수 = 캡 위)
+
+    # 축 방향 목표 거리 보상
+    rew_scale_target_dist = 15.0       # 목표 거리(7cm)에 가까울수록 보상
+    rew_scale_target_dist_penalty = -10.0  # 목표에서 벗어나면 패널티
+
+    # 펜 축 정렬 보상 (perp_dist)
+    rew_scale_perp_dist = -15.0        # 축에서 벗어나면 페널티 (강화: -8 → -15)
+    rew_scale_perp_exp = 8.0           # 축 위에 있으면 보상 (강화: 5 → 8)
+
+    # 자세 정렬
     rew_scale_alignment = 5.0
+
+    # 성공/기타
     rew_scale_ready_bonus = 10.0
     rew_scale_success = 100.0
     rew_scale_action = -0.01
-    rew_scale_collision = -50.0  # 충돌 페널티 강화
-    rew_scale_too_close = -10.0  # V2: 7cm 이하 접근 패널티
+    rew_scale_collision = -50.0
+    rew_scale_too_close = -15.0        # 목표보다 가까이 가면 패널티 (강화: -10 → -15)
 
 
 class E0509OSCEnv(DirectRLEnv):
@@ -537,7 +546,7 @@ class E0509OSCEnv(DirectRLEnv):
         return {"policy": obs}
 
     def _get_rewards(self) -> torch.Tensor:
-        """보상 계산"""
+        """보상 계산 (V3: axis_distance 기반 목표 거리)"""
         grasp_pos = self._get_grasp_point()
         cap_pos = self._get_pen_cap_pos()
 
@@ -551,17 +560,24 @@ class E0509OSCEnv(DirectRLEnv):
         pen_z = self._get_pen_z_axis()
         dot = torch.sum(gripper_z * pen_z, dim=-1)
 
-        # 거리 보상
-        rewards += self.cfg.rew_scale_dist_to_cap * distance_to_cap
-        rewards += self.cfg.rew_scale_dist_exp * torch.exp(-distance_to_cap * 15.0)
+        # ==========================================================================
+        # V3: 축 방향 목표 거리 보상 (axis_distance 기반)
+        # ==========================================================================
+        # 목표: axis_distance ≈ -7cm (캡 위 7cm)
+        target_axis_dist = self.cfg.target_axis_distance  # -0.07
+        axis_dist_error = torch.abs(axis_distance - target_axis_dist)
 
-        # 펜 축 거리 보상
+        # 목표 거리에 가까울수록 보상 (지수적)
+        rewards += self.cfg.rew_scale_target_dist * torch.exp(-axis_dist_error * 30.0)
+
+        # 목표에서 벗어나면 선형 패널티
+        rewards += self.cfg.rew_scale_target_dist_penalty * axis_dist_error
+
+        # ==========================================================================
+        # 펜 축 정렬 보상 (perp_dist) - 강화됨
+        # ==========================================================================
         rewards += self.cfg.rew_scale_perp_dist * perpendicular_dist
         rewards += self.cfg.rew_scale_perp_exp * torch.exp(-perpendicular_dist * 50.0)
-
-        # 접근 진행 보상
-        progress = self.prev_distance_to_cap - distance_to_cap
-        rewards += self.cfg.rew_scale_approach_progress * torch.clamp(progress * 50, min=0, max=1)
 
         # 자세 정렬 보상
         alignment_reward = (-dot - 0.5) * 0.5
@@ -572,20 +588,24 @@ class E0509OSCEnv(DirectRLEnv):
         above_cap_bonus = on_correct_side.float() * 0.5
         rewards += above_cap_bonus
 
+        # ==========================================================================
+        # 성공 조건: 목표 위치 근처에서 유지
+        # ==========================================================================
+        # 성공 조건: axis_distance가 목표 근처 + perp_dist 낮음 + 캡 위
+        near_target = torch.abs(axis_distance - target_axis_dist) < 0.02  # 목표 ±2cm
+        success_condition = (
+            near_target &
+            (perpendicular_dist < SUCCESS_PERP_DIST) &
+            on_correct_side
+        )
+
         # 성공 조건 근접 보너스
         near_success = (
-            (distance_to_cap < SUCCESS_DIST_TO_CAP * 2) &
+            (torch.abs(axis_distance - target_axis_dist) < 0.04) &  # 목표 ±4cm
             (perpendicular_dist < SUCCESS_PERP_DIST * 2) &
             on_correct_side
         )
         rewards[near_success] += self.cfg.rew_scale_ready_bonus * 0.5
-
-        # 성공 조건 체크
-        success_condition = (
-            (distance_to_cap < SUCCESS_DIST_TO_CAP) &
-            (perpendicular_dist < SUCCESS_PERP_DIST) &
-            on_correct_side
-        )
 
         self.success_hold_count[success_condition] += 1
         self.success_hold_count[~success_condition] = 0
@@ -595,17 +615,12 @@ class E0509OSCEnv(DirectRLEnv):
         self.success_count[success] += 1
 
         # ==========================================================================
-        # V2: 7cm 이하 접근 패널티
+        # V3: 목표보다 가까이 가면 패널티 (axis_distance 기반)
         # ==========================================================================
-        # 성공 조건(7cm, perp_dist, 캡 위)을 만족하면서 더 가까이 가면 패널티
-        too_close = (
-            (distance_to_cap < SUCCESS_DIST_TO_CAP) &
-            (perpendicular_dist < SUCCESS_PERP_DIST) &
-            on_correct_side
-        )
-        # 7cm 이하로 갈수록 패널티 증가 (0~7cm → 0~1)
-        too_close_penalty = torch.clamp(SUCCESS_DIST_TO_CAP - distance_to_cap, min=0) / SUCCESS_DIST_TO_CAP
-        rewards += self.cfg.rew_scale_too_close * too_close_penalty * too_close.float()
+        # axis_distance > target (= 캡에 더 가까움) 이면 패널티
+        too_close = (axis_distance > target_axis_dist) & on_correct_side
+        too_close_amount = torch.clamp(axis_distance - target_axis_dist, min=0)
+        rewards += self.cfg.rew_scale_too_close * too_close_amount * too_close.float() * 10.0
 
         # 페널티: 충돌 감지 및 저장 (에피소드 종료용)
         collision = self._check_pen_collision()
@@ -629,10 +644,12 @@ class E0509OSCEnv(DirectRLEnv):
 
         self.extras["log"]["OSC/success_hold_count_mean"] = self.success_hold_count.float().mean().item()
         self.extras["log"]["OSC/total_success"] = float(self.success_count.sum().item())
-        self.extras["log"]["OSC/collision_count"] = float(collision.sum().item())  # 충돌 횟수
-        self.extras["log"]["OSC/too_close_count"] = float(too_close.sum().item())  # V2: 7cm 이하 개수
+        self.extras["log"]["OSC/collision_count"] = float(collision.sum().item())
+        self.extras["log"]["OSC/too_close_count"] = float(too_close.sum().item())
         self.extras["log"]["Metrics/dist_to_cap_mean"] = distance_to_cap.mean().item()
         self.extras["log"]["Metrics/perp_dist_mean"] = perpendicular_dist.mean().item()
+        self.extras["log"]["Metrics/axis_dist_mean"] = axis_distance.mean().item()  # V3: 축 방향 거리
+        self.extras["log"]["Metrics/axis_dist_error"] = axis_dist_error.mean().item()  # V3: 목표 오차
         self.extras["log"]["Metrics/dot_mean"] = dot.mean().item()
 
         # 콘솔 출력
@@ -640,14 +657,16 @@ class E0509OSCEnv(DirectRLEnv):
             on_correct_pct = on_correct_side.float().mean().item() * 100
             collision_cnt = collision.sum().item()
             too_close_cnt = too_close.sum().item()
-            print(f"  [Step {self._global_step}] OSC Environment (V2: 7cm)", flush=True)
-            print(f"    → dist_cap={distance_to_cap.mean().item()*100:.2f}cm, "
-                  f"perp={perpendicular_dist.mean().item()*100:.2f}cm, "
-                  f"dot={dot.mean().item():.3f}", flush=True)
-            print(f"    → on_correct_side={on_correct_pct:.0f}%, "
-                  f"success_hold={self.success_hold_count.float().mean().item():.1f}, "
-                  f"total_success={self.success_count.sum().item()}, "
-                  f"collision={collision_cnt}, too_close={too_close_cnt}", flush=True)
+            axis_dist_mean = axis_distance.mean().item() * 100
+            axis_err_mean = axis_dist_error.mean().item() * 100
+            print(f"  [Step {self._global_step}] OSC V3 (목표: 캡 위 7cm)", flush=True)
+            print(f"    → axis_dist={axis_dist_mean:.2f}cm (목표: -7cm), "
+                  f"오차={axis_err_mean:.2f}cm, "
+                  f"perp={perpendicular_dist.mean().item()*100:.2f}cm", flush=True)
+            print(f"    → dot={dot.mean().item():.3f}, "
+                  f"on_correct={on_correct_pct:.0f}%, "
+                  f"success={self.success_count.sum().item()}, "
+                  f"collision={collision_cnt}", flush=True)
 
         return rewards
 
