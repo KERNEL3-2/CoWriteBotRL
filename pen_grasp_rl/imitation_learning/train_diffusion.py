@@ -105,6 +105,7 @@ class ConditionalUNet1D(nn.Module):
 
         self.input_dim = input_dim
         self.cond_dim = cond_dim
+        self.hidden_dims = hidden_dims
 
         # Time embedding
         self.time_embed = nn.Sequential(
@@ -120,8 +121,16 @@ class ConditionalUNet1D(nn.Module):
             nn.Linear(256, 128),
         )
 
-        # Combined embedding
-        self.embed_combine = nn.Linear(256, hidden_dims[0])
+        # 각 레이어별 임베딩 프로젝션 (차원 맞추기)
+        self.embed_projs_enc = nn.ModuleList()
+        for h_dim in hidden_dims:
+            self.embed_projs_enc.append(nn.Linear(256, h_dim))
+
+        self.embed_projs_dec = nn.ModuleList()
+        hidden_dims_rev = hidden_dims[::-1]
+        for i in range(len(hidden_dims_rev) - 1):
+            out_dim = hidden_dims_rev[i + 1]
+            self.embed_projs_dec.append(nn.Linear(256, out_dim))
 
         # Encoder
         self.encoder = nn.ModuleList()
@@ -137,7 +146,6 @@ class ConditionalUNet1D(nn.Module):
 
         # Decoder
         self.decoder = nn.ModuleList()
-        hidden_dims_rev = hidden_dims[::-1]
         for i, h_dim in enumerate(hidden_dims_rev[:-1]):
             out_dim = hidden_dims_rev[i + 1]
             self.decoder.append(nn.Sequential(
@@ -165,24 +173,26 @@ class ConditionalUNet1D(nn.Module):
         # Embeddings
         t_emb = self.time_embed(timestep.float().unsqueeze(-1) / 1000)  # (B, 128)
         c_emb = self.cond_embed(cond)  # (B, 128)
-        emb = self.embed_combine(torch.cat([t_emb, c_emb], dim=-1))  # (B, hidden_dims[0])
+        emb_combined = torch.cat([t_emb, c_emb], dim=-1)  # (B, 256)
 
         # Reshape for sequence processing
         x = x.reshape(B * T, D)
-        emb = emb.unsqueeze(1).expand(-1, T, -1).reshape(B * T, -1)
+        emb_combined_seq = emb_combined.unsqueeze(1).expand(-1, T, -1).reshape(B * T, -1)
 
         # Encoder with skip connections
         skip_connections = []
         h = x
-        for layer in self.encoder:
-            h = layer(h) + emb
+        for i, layer in enumerate(self.encoder):
+            emb_proj = self.embed_projs_enc[i](emb_combined_seq)
+            h = layer(h) + emb_proj
             skip_connections.append(h)
 
         # Decoder with skip connections
         for i, layer in enumerate(self.decoder):
             skip = skip_connections[-(i + 2)]
             h = torch.cat([h, skip], dim=-1)
-            h = layer(h) + emb
+            emb_proj = self.embed_projs_dec[i](emb_combined_seq)
+            h = layer(h) + emb_proj
 
         # Output
         out = self.output(h)
