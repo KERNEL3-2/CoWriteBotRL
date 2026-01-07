@@ -209,3 +209,7 @@ __marimo__/
 # Project specific
 CLAUDE.md
 RESUME_POINT.md
+
+# Training outputs (large files)
+checkpoints/
+logs/

@@ -1,0 +1,13 @@
+{
+    "action_dim": 6,
+    "metadata": {
+        "action_type": "absolute",
+        "robot": "Doosan E0509 + Gripper",
+        "source": "/home/fhekwn549/generated_trajectories",
+        "state_type": "full",
+        "task": "Pen Grasp"
+    },
+    "num_episodes": 935,
+    "state_dim": 25,
+    "total_timesteps": 55278
+}
