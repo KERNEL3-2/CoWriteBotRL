@@ -31,9 +31,15 @@ import zarr
 import numpy as np
 from tqdm import tqdm
 
-# 경로 설정
-INPUT_PATH = os.path.expanduser("~/CoWriteBotRL/data/pen_grasp.zarr")
-OUTPUT_PATH = os.path.expanduser("~/CoWriteBotRL/data/pen_grasp_robomimic.hdf5")
+# 경로 설정 (스크립트 위치 기준 상대 경로)
+# 스크립트: pen_grasp_rl/imitation_learning/convert_zarr_to_hdf5.py
+# 프로젝트: CoWriteBotRL/
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))  # imitation_learning/
+PROJECT_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))  # CoWriteBotRL/
+DATA_DIR = os.path.join(PROJECT_DIR, "data")
+
+INPUT_PATH = os.path.join(DATA_DIR, "pen_grasp.zarr")
+OUTPUT_PATH = os.path.join(DATA_DIR, "pen_grasp_robomimic.hdf5")
 
 # State 구조 (25차원)
 # joint_pos(6) + joint_vel(6) + ee_pose(7) + pen_pos(3) + pen_axis(3)
