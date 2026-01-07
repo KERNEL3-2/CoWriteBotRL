@@ -262,19 +262,21 @@ class ACT(nn.Module):
         self,
         obs: torch.Tensor,
         actions: Optional[torch.Tensor] = None,
+        use_encoder: bool = True,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Args:
             obs: (batch, obs_dim)
             actions: (batch, chunk_size, action_dim) - ground truth (학습 시에만)
+            use_encoder: encoder 사용 여부 (compute_loss에서는 항상 True)
 
         Returns:
             pred_actions: (batch, chunk_size, action_dim)
             mu: (batch, latent_dim) or None
             logvar: (batch, latent_dim) or None
         """
-        if self.training and actions is not None:
-            # 학습 모드: encoder 사용
+        if use_encoder and actions is not None:
+            # Encoder 사용 (학습/검증 loss 계산 시)
             mu, logvar = self.encoder(obs, actions)
             latent = self.reparameterize(mu, logvar)
         else:
@@ -340,7 +342,7 @@ class ACT(nn.Module):
             obs = obs.unsqueeze(0)
 
         self.eval()
-        pred_actions, _, _ = self.forward(obs)
+        pred_actions, _, _ = self.forward(obs, actions=None, use_encoder=False)
         action = pred_actions[:, 0, :]  # 첫 번째 action
 
         if single:
@@ -364,7 +366,7 @@ class ACT(nn.Module):
             obs = obs.unsqueeze(0)
 
         self.eval()
-        pred_actions, _, _ = self.forward(obs)
+        pred_actions, _, _ = self.forward(obs, actions=None, use_encoder=False)
 
         if single:
             pred_actions = pred_actions.squeeze(0)
