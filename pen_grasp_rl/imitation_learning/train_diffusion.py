@@ -194,6 +194,17 @@ class ConditionalUNet1D(nn.Module):
 class DiffusionPolicy:
     """Diffusion Policy 학습/추론 클래스"""
 
+    # Doosan E0509 관절 제한 (라디안)
+    # pen_workspace.py의 joint_limits_deg를 라디안으로 변환
+    JOINT_LIMITS_RAD = {
+        "joint_1": (-2 * np.pi, 2 * np.pi),      # ±360°
+        "joint_2": (-1.6581, 1.6581),            # ±95°
+        "joint_3": (-2.3562, 2.3562),            # ±135°
+        "joint_4": (-2 * np.pi, 2 * np.pi),      # ±360°
+        "joint_5": (-2.3562, 2.3562),            # ±135°
+        "joint_6": (-2 * np.pi, 2 * np.pi),      # ±360°
+    }
+
     def __init__(
         self,
         state_dim,
@@ -202,13 +213,19 @@ class DiffusionPolicy:
         n_obs_steps=2,
         num_train_timesteps=100,
         num_inference_steps=16,
-        device='cuda'
+        device='cuda',
+        clip_actions=True
     ):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.horizon = horizon
         self.n_obs_steps = n_obs_steps
         self.device = device
+        self.clip_actions = clip_actions
+
+        # 관절 제한 배열 생성 (추론 시 클리핑용)
+        self.joint_min = np.array([self.JOINT_LIMITS_RAD[f"joint_{i+1}"][0] for i in range(6)])
+        self.joint_max = np.array([self.JOINT_LIMITS_RAD[f"joint_{i+1}"][1] for i in range(6)])
 
         # Condition dim = flattened observations
         self.cond_dim = state_dim * n_obs_steps
@@ -301,7 +318,47 @@ class DiffusionPolicy:
             # Denoise step
             action = self.noise_scheduler.step(noise_pred, t, action).prev_sample
 
+        # 관절 제한 클리핑
+        if self.clip_actions:
+            joint_min_tensor = torch.tensor(self.joint_min, device=self.device, dtype=action.dtype)
+            joint_max_tensor = torch.tensor(self.joint_max, device=self.device, dtype=action.dtype)
+            action = torch.clamp(action, joint_min_tensor, joint_max_tensor)
+
         return action
+
+    def check_joint_limits(self, actions):
+        """
+        액션이 관절 제한 내에 있는지 확인
+
+        Args:
+            actions: (B, horizon, action_dim) or (horizon, action_dim)
+
+        Returns:
+            is_valid: bool
+            violations: 위반된 관절 정보
+        """
+        if isinstance(actions, torch.Tensor):
+            actions = actions.cpu().numpy()
+
+        if actions.ndim == 2:
+            actions = actions[np.newaxis, ...]
+
+        violations = []
+        for b in range(actions.shape[0]):
+            for t in range(actions.shape[1]):
+                for j in range(actions.shape[2]):
+                    val = actions[b, t, j]
+                    if val < self.joint_min[j] or val > self.joint_max[j]:
+                        violations.append({
+                            'batch': b,
+                            'timestep': t,
+                            'joint': j + 1,
+                            'value': val,
+                            'min': self.joint_min[j],
+                            'max': self.joint_max[j]
+                        })
+
+        return len(violations) == 0, violations
 
     def save(self, path):
         """모델 저장"""
@@ -313,6 +370,9 @@ class DiffusionPolicy:
                 'action_dim': self.action_dim,
                 'horizon': self.horizon,
                 'n_obs_steps': self.n_obs_steps,
+                'clip_actions': self.clip_actions,
+                'joint_min': self.joint_min.tolist(),
+                'joint_max': self.joint_max.tolist(),
             }
         }, path)
 
@@ -321,6 +381,16 @@ class DiffusionPolicy:
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model'])
         self.ema.load_state_dict(checkpoint['ema'])
+
+        # 관절 제한 설정 로드 (있으면)
+        if 'config' in checkpoint:
+            config = checkpoint['config']
+            if 'clip_actions' in config:
+                self.clip_actions = config['clip_actions']
+            if 'joint_min' in config:
+                self.joint_min = np.array(config['joint_min'])
+            if 'joint_max' in config:
+                self.joint_max = np.array(config['joint_max'])
 
 
 def train(args):
