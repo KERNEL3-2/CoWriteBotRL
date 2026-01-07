@@ -1,22 +1,24 @@
 """
-E0509 IK 환경 V8 (V7 기반 + 관절 제한 페널티 + 수직거리 7cm)
+E0509 IK 환경 V8.1 (V7 기반 + 관절 제한 + 수직거리 7cm 유지)
 
-=== V8 핵심 변경사항 (V7 대비) ===
-1. SUCCESS_DIST_TO_CAP: 3cm → 7cm (수직거리 증가)
-2. 관절 제한 페널티 추가 (한계에 가까워지면 페널티)
-3. 관절 제한 마진: 90% 넘으면 페널티 시작
+=== V8.1 핵심 변경사항 (V8 대비) ===
+1. 보상 스케일 축소 (Value Loss 안정화)
+   - rew_scale_success: 100 → 50
+   - rew_scale_dist_exp: 10 → 5
+2. 7cm 이하 접근 페널티 추가
+   - perp_dist 조건 만족 상태에서 7cm보다 가까워지면 페널티
+   - 가까워질수록 페널티 증가 (선형)
 
-=== V7에서 유지 ===
-- RL: 위치(x, y, z)만 제어 → 3DoF
-- 자세: 펜 축 기반 자동 계산 → IK가 처리
-- GRASP 제거: 실제 로봇에서 별도 처리 (Sim2Real Gap 회피)
-- Curriculum Learning
+=== V8에서 유지 ===
+- SUCCESS_DIST_TO_CAP: 7cm
+- 관절 제한 페널티 (90% 넘으면)
 
 === 성공 조건 ===
-- 캡까지 거리 < 7cm (변경!)
+- 캡까지 거리 < 7cm
 - 펜 축 정렬 (perp_dist < 1cm)
 - 캡 위에 있음 (on_correct_side)
 - 30 스텝 유지
+- 단, 7cm 이하로 접근하면 페널티 → 딱 7cm에서 멈추도록 유도
 """
 from __future__ import annotations
 
@@ -183,11 +185,11 @@ class E0509IKEnvV8Cfg(DirectRLEnvCfg):
     ee_offset_pos = [0.0, 0.0, 0.15]
 
     # ==========================================================================
-    # 보상 스케일 (V8)
+    # 보상 스케일 (V8.1 - Value Loss 안정화)
     # ==========================================================================
     # APPROACH 단계 - 펜 캡으로 접근
     rew_scale_dist_to_cap = -15.0      # 캡까지 거리 페널티 (선형)
-    rew_scale_dist_exp = 10.0          # 캡까지 거리 보상 (지수)
+    rew_scale_dist_exp = 5.0           # 캡까지 거리 보상 (지수) - V8.1: 10→5 축소
     rew_scale_perp_dist = -8.0         # 펜 축 거리 페널티
     rew_scale_perp_exp = 5.0           # 펜 축 거리 보상 (지수)
     rew_scale_approach_progress = 3.0  # 접근 진행 보상
@@ -197,7 +199,7 @@ class E0509IKEnvV8Cfg(DirectRLEnvCfg):
     rew_scale_ready_bonus = 10.0       # 성공 조건 근접 보너스
 
     # 공통
-    rew_scale_success = 100.0          # 성공 보상
+    rew_scale_success = 50.0           # 성공 보상 - V8.1: 100→50 축소
     rew_scale_action = -0.01           # 액션 페널티
 
     # 페널티
@@ -205,6 +207,9 @@ class E0509IKEnvV8Cfg(DirectRLEnvCfg):
 
     # V8: 관절 제한 페널티
     rew_scale_joint_limit = -5.0       # 관절 제한 페널티
+
+    # V8.1: 7cm 이하 접근 페널티 (너무 가까이 가면 페널티)
+    rew_scale_too_close = -10.0        # 7cm 이하 페널티
 
 
 class E0509IKEnvV8(DirectRLEnv):
@@ -623,6 +628,17 @@ class E0509IKEnvV8(DirectRLEnv):
         joint_limit_penalty = self._compute_joint_limit_penalty()
         rewards += self.cfg.rew_scale_joint_limit * joint_limit_penalty
 
+        # V8.1: 7cm 이하 접근 페널티 (perp_dist 조건 만족 + 7cm 이하)
+        # 펜 축에 정렬되어 있으면서 7cm보다 가까이 가면 페널티
+        too_close = (
+            (distance_to_cap < SUCCESS_DIST_TO_CAP) &  # 7cm 이하
+            (perpendicular_dist < SUCCESS_PERP_DIST) &  # 펜 축에 정렬됨
+            on_correct_side  # 캡 위에 있음
+        )
+        # 7cm 이하로 가까워진 정도에 비례해서 페널티 (0~7cm 구간)
+        too_close_penalty = torch.clamp(SUCCESS_DIST_TO_CAP - distance_to_cap, min=0) / SUCCESS_DIST_TO_CAP
+        rewards += self.cfg.rew_scale_too_close * too_close_penalty * too_close.float()
+
         # =========================================================
         # 이전 거리 업데이트
         # =========================================================
@@ -646,6 +662,10 @@ class E0509IKEnvV8(DirectRLEnv):
 
         # V8: 관절 제한 페널티 로깅
         self.extras["log"]["Metrics/joint_limit_penalty"] = joint_limit_penalty.mean().item()
+
+        # V8.1: 7cm 이하 페널티 로깅
+        self.extras["log"]["Metrics/too_close_penalty"] = (too_close_penalty * too_close.float()).mean().item()
+        self.extras["log"]["Metrics/too_close_ratio"] = too_close.float().mean().item()
 
         # 콘솔 출력
         if self._global_step % self._phase_print_interval == 0:
