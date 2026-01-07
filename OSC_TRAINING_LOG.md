@@ -468,3 +468,56 @@ python3 pen_grasp_rl/scripts/train_osc.py --headless --num_envs 4096 --stiffness
 | `config/__init__.py` | NEW | Config 모듈 |
 | `models/first_control.usd` | MODIFIED | 관절 제한 수정 |
 | `envs/__init__.py` | MODIFIED | OSC 환경 등록 |
+
+---
+
+## OSC V2 환경 수정 (2026-01-07)
+
+### 변경 배경
+
+기존 OSC 학습에서 dot_mean **-0.77**까지 도달한 버전(e0feb11)을 기반으로, 성공 조건을 완화하고 7cm 이하 접근 패널티를 추가.
+
+### 변경 내용
+
+| 항목 | 기존 (e0feb11) | V2 |
+|------|---------------|-----|
+| SUCCESS_DIST_TO_CAP | 3cm | **7cm** |
+| SUCCESS_HOLD_STEPS | 30 | **10** |
+| rew_scale_alignment | 5.0 | 5.0 (유지) |
+| too_close 패널티 | 없음 | **-10.0** |
+
+### 7cm 접근 패널티 로직
+
+성공 조건(7cm, perp_dist < 1cm, 캡 위)을 만족하면서 더 가까이 가면 패널티 부여:
+
+```python
+# V2: 7cm 이하 접근 패널티
+too_close = (
+    (distance_to_cap < SUCCESS_DIST_TO_CAP) &
+    (perpendicular_dist < SUCCESS_PERP_DIST) &
+    on_correct_side
+)
+# 7cm 이하로 갈수록 패널티 증가 (0~7cm → 0~1)
+too_close_penalty = torch.clamp(SUCCESS_DIST_TO_CAP - distance_to_cap, min=0) / SUCCESS_DIST_TO_CAP
+rewards += self.cfg.rew_scale_too_close * too_close_penalty * too_close.float()
+```
+
+### 새로운 TensorBoard 메트릭
+
+| 메트릭 | 설명 |
+|--------|------|
+| `OSC/too_close_count` | 7cm 이하 환경 수 |
+
+### 학습 명령어
+
+```bash
+cd ~/IsaacLab
+source ~/isaacsim_env/bin/activate
+python pen_grasp_rl/scripts/train_osc.py --headless --num_envs 4096
+```
+
+### 기대 효과
+
+1. 성공 조건 완화로 학습 초반 성공 경험 증가
+2. 7cm 이하 접근 패널티로 Sim2Real 시 충돌 방지
+3. 짧은 hold_steps(10)으로 빠른 성공 판정
