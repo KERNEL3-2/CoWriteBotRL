@@ -100,63 +100,65 @@ class TrajectoryDataset(Dataset):
 class ConditionalUNet1D(nn.Module):
     """간단한 1D U-Net (Diffusion Policy용)"""
 
-    def __init__(self, input_dim, cond_dim, hidden_dims=[256, 512, 256]):
+    def __init__(self, input_dim, cond_dim, hidden_dim=256):
         super().__init__()
 
         self.input_dim = input_dim
         self.cond_dim = cond_dim
-        self.hidden_dims = hidden_dims
+        self.hidden_dim = hidden_dim
 
-        # Time embedding
+        # Time + Condition embedding
         self.time_embed = nn.Sequential(
-            nn.Linear(1, 128),
+            nn.Linear(1, hidden_dim),
             nn.SiLU(),
-            nn.Linear(128, 128),
+            nn.Linear(hidden_dim, hidden_dim),
         )
 
-        # Condition embedding
         self.cond_embed = nn.Sequential(
-            nn.Linear(cond_dim, 256),
+            nn.Linear(cond_dim, hidden_dim),
             nn.SiLU(),
-            nn.Linear(256, 128),
+            nn.Linear(hidden_dim, hidden_dim),
         )
 
-        # 각 레이어별 임베딩 프로젝션 (차원 맞추기)
-        self.embed_projs_enc = nn.ModuleList()
-        for h_dim in hidden_dims:
-            self.embed_projs_enc.append(nn.Linear(256, h_dim))
+        # Input projection
+        self.input_proj = nn.Linear(input_dim, hidden_dim)
 
-        self.embed_projs_dec = nn.ModuleList()
-        hidden_dims_rev = hidden_dims[::-1]
-        for i in range(len(hidden_dims_rev) - 1):
-            out_dim = hidden_dims_rev[i + 1]
-            self.embed_projs_dec.append(nn.Linear(256, out_dim))
+        # Encoder blocks (모두 같은 차원)
+        self.encoder1 = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
+        )
+        self.encoder2 = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
+        )
+        self.encoder3 = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
+        )
 
-        # Encoder
-        self.encoder = nn.ModuleList()
-        in_dim = input_dim
-        for h_dim in hidden_dims:
-            self.encoder.append(nn.Sequential(
-                nn.Linear(in_dim, h_dim),
-                nn.SiLU(),
-                nn.Linear(h_dim, h_dim),
-                nn.SiLU(),
-            ))
-            in_dim = h_dim
+        # Decoder blocks (skip connection으로 차원 2배)
+        self.decoder1 = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
+        )
+        self.decoder2 = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
+        )
 
-        # Decoder
-        self.decoder = nn.ModuleList()
-        for i, h_dim in enumerate(hidden_dims_rev[:-1]):
-            out_dim = hidden_dims_rev[i + 1]
-            self.decoder.append(nn.Sequential(
-                nn.Linear(h_dim * 2, out_dim),  # skip connection
-                nn.SiLU(),
-                nn.Linear(out_dim, out_dim),
-                nn.SiLU(),
-            ))
-
-        # Output
-        self.output = nn.Linear(hidden_dims[0], input_dim)
+        # Output projection
+        self.output_proj = nn.Linear(hidden_dim, input_dim)
 
     def forward(self, x, timestep, cond):
         """
@@ -171,31 +173,28 @@ class ConditionalUNet1D(nn.Module):
         B, T, D = x.shape
 
         # Embeddings
-        t_emb = self.time_embed(timestep.float().unsqueeze(-1) / 1000)  # (B, 128)
-        c_emb = self.cond_embed(cond)  # (B, 128)
-        emb_combined = torch.cat([t_emb, c_emb], dim=-1)  # (B, 256)
+        t_emb = self.time_embed(timestep.float().unsqueeze(-1) / 1000)  # (B, hidden_dim)
+        c_emb = self.cond_embed(cond)  # (B, hidden_dim)
+        emb = t_emb + c_emb  # (B, hidden_dim)
 
         # Reshape for sequence processing
         x = x.reshape(B * T, D)
-        emb_combined_seq = emb_combined.unsqueeze(1).expand(-1, T, -1).reshape(B * T, -1)
+        emb = emb.unsqueeze(1).expand(-1, T, -1).reshape(B * T, -1)
 
-        # Encoder with skip connections
-        skip_connections = []
-        h = x
-        for i, layer in enumerate(self.encoder):
-            emb_proj = self.embed_projs_enc[i](emb_combined_seq)
-            h = layer(h) + emb_proj
-            skip_connections.append(h)
+        # Input projection
+        h = self.input_proj(x)  # (B*T, hidden_dim)
+
+        # Encoder
+        h1 = self.encoder1(h) + emb
+        h2 = self.encoder2(h1) + emb
+        h3 = self.encoder3(h2) + emb
 
         # Decoder with skip connections
-        for i, layer in enumerate(self.decoder):
-            skip = skip_connections[-(i + 2)]
-            h = torch.cat([h, skip], dim=-1)
-            emb_proj = self.embed_projs_dec[i](emb_combined_seq)
-            h = layer(h) + emb_proj
+        d1 = self.decoder1(torch.cat([h3, h2], dim=-1)) + emb
+        d2 = self.decoder2(torch.cat([d1, h1], dim=-1)) + emb
 
         # Output
-        out = self.output(h)
+        out = self.output_proj(d2)
         out = out.reshape(B, T, D)
 
         return out
@@ -244,7 +243,7 @@ class DiffusionPolicy:
         self.model = ConditionalUNet1D(
             input_dim=action_dim,
             cond_dim=self.cond_dim,
-            hidden_dims=[256, 512, 256]
+            hidden_dim=256
         ).to(device)
 
         # Noise scheduler
