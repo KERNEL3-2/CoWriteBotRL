@@ -95,9 +95,14 @@ def create_state_action(trajectories, state_type='full', action_type='absolute')
             raise ValueError(f"Unknown state_type: {state_type}")
 
         # Action 구성
+        # BC에서 action[t]는 "다음에 가야 할 위치"를 의미
+        # 따라서 action[t] = joint_pos[t+1]
         if action_type == 'absolute':
-            # 절대 관절 위치를 액션으로 사용
-            actions = joint_pos
+            # 다음 타임스텝의 관절 위치를 액션으로 사용
+            # action[t] = joint_pos[t+1], 마지막은 현재 위치 유지
+            actions = np.zeros_like(joint_pos)
+            actions[:-1] = joint_pos[1:]  # action[t] = joint_pos[t+1]
+            actions[-1] = joint_pos[-1]   # 마지막은 현재 위치 유지
         elif action_type == 'delta':
             # 관절 위치 변화량을 액션으로 사용
             actions = np.zeros_like(joint_pos)

@@ -7,7 +7,7 @@
         "state_type": "full",
         "task": "Pen Grasp"
     },
-    "num_episodes": 935,
+    "num_episodes": 100,
     "state_dim": 25,
-    "total_timesteps": 55278
+    "total_timesteps": 3234
 }
