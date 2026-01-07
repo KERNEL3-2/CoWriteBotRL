@@ -166,6 +166,11 @@ class E0509OSCEnvCfg(DirectRLEnvCfg):
     pen_tilt_max = 0.79  # 45도
     pen_yaw_range = (-3.14, 3.14)
 
+    # 성공 조건
+    success_dist_to_cap = SUCCESS_DIST_TO_CAP   # 캡까지 거리 < 7cm
+    success_perp_dist = SUCCESS_PERP_DIST       # 펜 축에서 벗어난 거리 < 1cm
+    success_hold_steps = SUCCESS_HOLD_STEPS     # 10 스텝 유지
+
     # OSC 설정
     osc_motion_stiffness = 150.0      # 위치 강성
     osc_motion_damping_ratio = 1.0    # 임계 감쇠
