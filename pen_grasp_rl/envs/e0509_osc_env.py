@@ -18,13 +18,13 @@ E0509 OSC 환경 (Operational Space Control)
 - 30 스텝 유지
 - 7cm 이하 접근 시 패널티 (너무 가까이 가지 않도록)
 
-=== 관절 제한 (작업 범위 제한) ===
-- J1: ±45°  (베이스 회전 제한)
+=== 관절 제한 (DART platform 기준) ===
+- J1: ±360°
 - J2: ±95°  (자가 충돌 방지)
 - J3: ±135°
-- J4: ±45°  (손목 회전 제한)
+- J4: ±360°
 - J5: ±135°
-- J6: ±90°  (그리퍼 회전 제한)
+- J6: ±360°
 """
 from __future__ import annotations
 
@@ -171,15 +171,6 @@ class E0509OSCEnvCfg(DirectRLEnvCfg):
     success_perp_dist = SUCCESS_PERP_DIST       # 펜 축에서 벗어난 거리 < 1cm
     success_hold_steps = SUCCESS_HOLD_STEPS     # 10 스텝 유지
 
-    # 관절 제한 (작업 범위 제한)
-    # J1, J4: ±45° (0.785 rad), J6: ±90° (1.571 rad)
-    # J2, J3, J5: 기존 USD 제한 유지 (None)
-    custom_joint_limits = {
-        0: (-0.785, 0.785),   # J1: ±45°
-        3: (-0.785, 0.785),   # J4: ±45°
-        5: (-1.571, 1.571),   # J6: ±90°
-    }
-
     # OSC 설정
     osc_motion_stiffness = 150.0      # 위치 강성
     osc_motion_damping_ratio = 1.0    # 임계 감쇠
@@ -203,7 +194,6 @@ class E0509OSCEnvCfg(DirectRLEnvCfg):
     rew_scale_action = -0.01
     rew_scale_collision = -50.0  # 충돌 페널티 강화
     rew_scale_too_close = -10.0  # V2: 7cm 이하 접근 패널티
-    rew_scale_joint_limit = -5.0  # 관절 제한 위반 페널티
 
 
 class E0509OSCEnv(DirectRLEnv):
@@ -260,19 +250,9 @@ class E0509OSCEnv(DirectRLEnv):
 
         self.action_scale = self.cfg.action_scale
 
-        # 관절 한계 (USD에서 로드 후 커스텀 제한 적용)
-        self.robot_dof_lower_limits = self.robot.data.soft_joint_pos_limits[0, :6, 0].clone()
-        self.robot_dof_upper_limits = self.robot.data.soft_joint_pos_limits[0, :6, 1].clone()
-
-        # 커스텀 관절 제한 적용
-        for joint_idx, (lower, upper) in self.cfg.custom_joint_limits.items():
-            self.robot_dof_lower_limits[joint_idx] = lower
-            self.robot_dof_upper_limits[joint_idx] = upper
-
-        print(f"[E0509OSCEnv] 커스텀 관절 제한 적용:")
-        print(f"  J1: ±45° ({self.robot_dof_lower_limits[0]:.3f} ~ {self.robot_dof_upper_limits[0]:.3f})")
-        print(f"  J4: ±45° ({self.robot_dof_lower_limits[3]:.3f} ~ {self.robot_dof_upper_limits[3]:.3f})")
-        print(f"  J6: ±90° ({self.robot_dof_lower_limits[5]:.3f} ~ {self.robot_dof_upper_limits[5]:.3f})")
+        # 관절 한계
+        self.robot_dof_lower_limits = self.robot.data.soft_joint_pos_limits[0, :6, 0]
+        self.robot_dof_upper_limits = self.robot.data.soft_joint_pos_limits[0, :6, 1]
 
         # 상태 변수
         self.prev_distance_to_cap = torch.zeros(self.num_envs, device=self.device)
@@ -638,13 +618,6 @@ class E0509OSCEnv(DirectRLEnv):
 
         rewards += self.cfg.rew_scale_action * torch.sum(torch.square(self.actions), dim=-1)
 
-        # 관절 제한 위반 페널티
-        joint_pos = self.robot.data.joint_pos[:, :6]
-        lower_violation = torch.clamp(self.robot_dof_lower_limits - joint_pos, min=0)
-        upper_violation = torch.clamp(joint_pos - self.robot_dof_upper_limits, min=0)
-        joint_limit_violation = torch.sum(lower_violation + upper_violation, dim=-1)
-        rewards += self.cfg.rew_scale_joint_limit * joint_limit_violation
-
         # 이전 거리 업데이트
         self.prev_distance_to_cap = distance_to_cap.clone()
 
@@ -658,7 +631,6 @@ class E0509OSCEnv(DirectRLEnv):
         self.extras["log"]["OSC/total_success"] = float(self.success_count.sum().item())
         self.extras["log"]["OSC/collision_count"] = float(collision.sum().item())  # 충돌 횟수
         self.extras["log"]["OSC/too_close_count"] = float(too_close.sum().item())  # V2: 7cm 이하 개수
-        self.extras["log"]["OSC/joint_limit_violation"] = joint_limit_violation.mean().item()
         self.extras["log"]["Metrics/dist_to_cap_mean"] = distance_to_cap.mean().item()
         self.extras["log"]["Metrics/perp_dist_mean"] = perpendicular_dist.mean().item()
         self.extras["log"]["Metrics/dot_mean"] = dot.mean().item()
