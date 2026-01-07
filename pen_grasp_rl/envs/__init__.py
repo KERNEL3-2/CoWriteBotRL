@@ -47,6 +47,9 @@ from .e0509_ik_env_v7 import (
 # OSC 기반 환경
 from .e0509_osc_env import E0509OSCEnv, E0509OSCEnvCfg, E0509OSCEnvCfg_PLAY
 
+# Domain Randomization 환경 (Sim2Real Ready)
+from .e0509_dr_env import E0509DREnv, E0509DREnvCfg, E0509DREnvCfg_PLAY, E0509DREnvCfg_TRAIN
+
 __all__ = [
     # Manager-Based
     "PenGraspEnv", "PenGraspEnvCfg",
@@ -68,4 +71,6 @@ __all__ = [
     "E0509IKEnvV7Cfg_L0", "E0509IKEnvV7Cfg_L1", "E0509IKEnvV7Cfg_L2", "E0509IKEnvV7Cfg_L3",
     # OSC (Operational Space Control)
     "E0509OSCEnv", "E0509OSCEnvCfg", "E0509OSCEnvCfg_PLAY",
+    # Domain Randomization (Sim2Real Ready)
+    "E0509DREnv", "E0509DREnvCfg", "E0509DREnvCfg_PLAY", "E0509DREnvCfg_TRAIN",
 ]
