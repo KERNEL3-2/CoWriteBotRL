@@ -11,11 +11,12 @@ E0509 OSC 환경 (Operational Space Control)
 - 제어: 임피던스 기반 토크 제어 (Sim2Real 친화적)
 - GRASP 제거: 실제 로봇에서 별도 처리
 
-=== 성공 조건 ===
-- 캡까지 거리 < 3cm
+=== 성공 조건 (V2 수정) ===
+- 캡까지 거리 < 7cm (기존 3cm → 7cm)
 - 펜 축 정렬 (perp_dist < 1cm)
 - 캡 위에 있음 (on_correct_side)
 - 30 스텝 유지
+- 7cm 이하 접근 시 패널티 (너무 가까이 가지 않도록)
 
 === 관절 제한 (DART platform 기준) ===
 - J1: ±360°
@@ -55,8 +56,8 @@ PEN_USD_PATH = os.path.join(_SCRIPT_DIR, "..", "models", "pen.usd")
 
 PEN_LENGTH = 0.1207  # 120.7mm
 
-# 성공 조건
-SUCCESS_DIST_TO_CAP = 0.03       # 캡까지 거리 < 3cm
+# 성공 조건 (V2: 7cm로 변경)
+SUCCESS_DIST_TO_CAP = 0.07       # 캡까지 거리 < 7cm (기존 3cm)
 SUCCESS_PERP_DIST = 0.01         # 펜 축에서 벗어난 거리 < 1cm
 SUCCESS_HOLD_STEPS = 30          # 30 스텝 유지하면 성공
 
@@ -182,26 +183,12 @@ class E0509OSCEnvCfg(DirectRLEnvCfg):
     rew_scale_perp_dist = -8.0
     rew_scale_perp_exp = 5.0
     rew_scale_approach_progress = 3.0
-    rew_scale_alignment = 10.0  # 5.0 → 10.0 (정렬 보상 강화)
+    rew_scale_alignment = 5.0
     rew_scale_ready_bonus = 10.0
     rew_scale_success = 100.0
     rew_scale_action = -0.01
     rew_scale_collision = -50.0  # 충돌 페널티 강화
-
-    # ==========================================================================
-    # Reward Clipping (발산 방지)
-    # ==========================================================================
-    # VF Loss 폭발을 방지하기 위해 reward 범위 제한
-    # 정상 학습 시 reward ~7000 이므로 [-100, 100]으로 정규화
-    reward_clip_min = -100.0
-    reward_clip_max = 100.0
-
-    # ==========================================================================
-    # 성공 조건
-    # ==========================================================================
-    success_dist_to_cap = 0.03     # 캡까지 거리 < 3cm
-    success_perp_dist = 0.01       # 펜 축 정렬 < 1cm
-    success_hold_steps = 30        # 성공 유지 스텝 (Default: 30)
+    rew_scale_too_close = -10.0  # V2: 7cm 이하 접근 패널티
 
 
 class E0509OSCEnv(DirectRLEnv):
@@ -232,6 +219,7 @@ class E0509OSCEnv(DirectRLEnv):
         print(f"[E0509OSCEnv] EE body: {body_names[0]} (idx={self._ee_body_idx})")
         print(f"[E0509OSCEnv] Arm joints: {self._arm_joint_names}")
         print(f"[E0509OSCEnv] Using Operational Space Control (OSC)")
+        print(f"[E0509OSCEnv] V2: SUCCESS_DIST_TO_CAP = {SUCCESS_DIST_TO_CAP*100:.0f}cm, too_close penalty enabled")
 
         # OSC Controller
         self._osc_controller = OperationalSpaceController(
@@ -570,11 +558,9 @@ class E0509OSCEnv(DirectRLEnv):
         progress = self.prev_distance_to_cap - distance_to_cap
         rewards += self.cfg.rew_scale_approach_progress * torch.clamp(progress * 50, min=0, max=1)
 
-        # 자세 정렬 보상 (전 범위에서 그라디언트 제공)
-        # dot = -1 (완벽 정렬) → reward = 1.0
-        # dot = 0 (수직) → reward = 0.0
-        # dot = +1 (반대 방향) → reward = -1.0 (페널티)
-        alignment_reward = -dot  # 단순하고 전 범위에서 학습 신호 제공
+        # 자세 정렬 보상
+        alignment_reward = (-dot - 0.5) * 0.5
+        alignment_reward = torch.clamp(alignment_reward, min=0)
         rewards += self.cfg.rew_scale_alignment * alignment_reward
 
         # 캡 위에 있을 때 보너스
@@ -583,25 +569,38 @@ class E0509OSCEnv(DirectRLEnv):
 
         # 성공 조건 근접 보너스
         near_success = (
-            (distance_to_cap < self.cfg.success_dist_to_cap * 2) &
-            (perpendicular_dist < self.cfg.success_perp_dist * 2) &
+            (distance_to_cap < SUCCESS_DIST_TO_CAP * 2) &
+            (perpendicular_dist < SUCCESS_PERP_DIST * 2) &
             on_correct_side
         )
         rewards[near_success] += self.cfg.rew_scale_ready_bonus * 0.5
 
         # 성공 조건 체크
         success_condition = (
-            (distance_to_cap < self.cfg.success_dist_to_cap) &
-            (perpendicular_dist < self.cfg.success_perp_dist) &
+            (distance_to_cap < SUCCESS_DIST_TO_CAP) &
+            (perpendicular_dist < SUCCESS_PERP_DIST) &
             on_correct_side
         )
 
         self.success_hold_count[success_condition] += 1
         self.success_hold_count[~success_condition] = 0
 
-        success = self.success_hold_count >= self.cfg.success_hold_steps
+        success = self.success_hold_count >= SUCCESS_HOLD_STEPS
         rewards[success] += self.cfg.rew_scale_success
         self.success_count[success] += 1
+
+        # ==========================================================================
+        # V2: 7cm 이하 접근 패널티
+        # ==========================================================================
+        # 성공 조건(7cm, perp_dist, 캡 위)을 만족하면서 더 가까이 가면 패널티
+        too_close = (
+            (distance_to_cap < SUCCESS_DIST_TO_CAP) &
+            (perpendicular_dist < SUCCESS_PERP_DIST) &
+            on_correct_side
+        )
+        # 7cm 이하로 갈수록 패널티 증가 (0~7cm → 0~1)
+        too_close_penalty = torch.clamp(SUCCESS_DIST_TO_CAP - distance_to_cap, min=0) / SUCCESS_DIST_TO_CAP
+        rewards += self.cfg.rew_scale_too_close * too_close_penalty * too_close.float()
 
         # 페널티: 충돌 감지 및 저장 (에피소드 종료용)
         collision = self._check_pen_collision()
@@ -625,79 +624,31 @@ class E0509OSCEnv(DirectRLEnv):
 
         self.extras["log"]["OSC/success_hold_count_mean"] = self.success_hold_count.float().mean().item()
         self.extras["log"]["OSC/total_success"] = float(self.success_count.sum().item())
-        self.extras["log"]["OSC/collision_count"] = float(collision.sum().item())
+        self.extras["log"]["OSC/collision_count"] = float(collision.sum().item())  # 충돌 횟수
+        self.extras["log"]["OSC/too_close_count"] = float(too_close.sum().item())  # V2: 7cm 이하 개수
         self.extras["log"]["Metrics/dist_to_cap_mean"] = distance_to_cap.mean().item()
         self.extras["log"]["Metrics/perp_dist_mean"] = perpendicular_dist.mean().item()
         self.extras["log"]["Metrics/dot_mean"] = dot.mean().item()
-
-        # dot 분포 로깅
-        dot_excellent = (dot < -0.9).float().mean().item() * 100
-        dot_poor = (dot > -0.5).float().mean().item() * 100
-        self.extras["log"]["DotDist/excellent_pct"] = dot_excellent
-        self.extras["log"]["DotDist/poor_pct"] = dot_poor
-
-        # 아웃라이어(dot > -0.5) 발생 시 펜 위치/각도 분석
-        outlier_mask = dot > -0.5
-        if outlier_mask.any():
-            # 펜 캡 위치 (로컬 좌표)
-            cap_pos_local = cap_pos - self.scene.env_origins
-            outlier_cap_pos = cap_pos_local[outlier_mask]
-
-            # 펜 기울기 계산 (월드 Z축과의 각도)
-            pen_z_outlier = pen_z[outlier_mask]
-            world_z = torch.tensor([0.0, 0.0, 1.0], device=self.device)
-            cos_tilt = torch.sum(pen_z_outlier * world_z, dim=-1)
-            tilt_rad = torch.acos(torch.clamp(cos_tilt.abs(), -1.0, 1.0))
-            tilt_deg = tilt_rad * 180.0 / 3.14159
-
-            self.extras["log"]["Outlier/count"] = float(outlier_mask.sum().item())
-            self.extras["log"]["Outlier/pen_x_mean"] = outlier_cap_pos[:, 0].mean().item()
-            self.extras["log"]["Outlier/pen_y_mean"] = outlier_cap_pos[:, 1].mean().item()
-            self.extras["log"]["Outlier/pen_z_mean"] = outlier_cap_pos[:, 2].mean().item()
-            self.extras["log"]["Outlier/pen_tilt_deg_mean"] = tilt_deg.mean().item()
-
-            # 아웃라이어 펜 위치 범위
-            self.extras["log"]["Outlier/pen_x_min"] = outlier_cap_pos[:, 0].min().item()
-            self.extras["log"]["Outlier/pen_x_max"] = outlier_cap_pos[:, 0].max().item()
-            self.extras["log"]["Outlier/pen_y_min"] = outlier_cap_pos[:, 1].min().item()
-            self.extras["log"]["Outlier/pen_y_max"] = outlier_cap_pos[:, 1].max().item()
-            self.extras["log"]["Outlier/pen_z_min"] = outlier_cap_pos[:, 2].min().item()
-            self.extras["log"]["Outlier/pen_z_max"] = outlier_cap_pos[:, 2].max().item()
-            self.extras["log"]["Outlier/pen_tilt_deg_min"] = tilt_deg.min().item()
-            self.extras["log"]["Outlier/pen_tilt_deg_max"] = tilt_deg.max().item()
 
         # 콘솔 출력
         if self._global_step % self._phase_print_interval == 0:
             on_correct_pct = on_correct_side.float().mean().item() * 100
             collision_cnt = collision.sum().item()
-            print(f"  [Step {self._global_step}] OSC Environment", flush=True)
+            too_close_cnt = too_close.sum().item()
+            print(f"  [Step {self._global_step}] OSC Environment (V2: 7cm)", flush=True)
             print(f"    → dist_cap={distance_to_cap.mean().item()*100:.2f}cm, "
                   f"perp={perpendicular_dist.mean().item()*100:.2f}cm, "
                   f"dot={dot.mean().item():.3f}", flush=True)
             print(f"    → on_correct_side={on_correct_pct:.0f}%, "
                   f"success_hold={self.success_hold_count.float().mean().item():.1f}, "
                   f"total_success={self.success_count.sum().item()}, "
-                  f"collision={collision_cnt}", flush=True)
-            print(f"    → dot분포: 우수(<-0.9)={dot_excellent:.1f}%, 불량(>-0.5)={dot_poor:.1f}%", flush=True)
+                  f"collision={collision_cnt}, too_close={too_close_cnt}", flush=True)
 
-        # ==========================================================================
-        # Reward Clipping (발산 방지)
-        # ==========================================================================
-        # VF Loss 폭발을 방지하기 위해 reward 범위 제한
-        rewards_clipped = torch.clamp(rewards, self.cfg.reward_clip_min, self.cfg.reward_clip_max)
-
-        # 클리핑 발생 로깅 (디버깅용)
-        clipped_count = ((rewards < self.cfg.reward_clip_min) | (rewards > self.cfg.reward_clip_max)).sum().item()
-        if clipped_count > 0:
-            self.extras["log"]["Reward/clipped_count"] = float(clipped_count)
-            self.extras["log"]["Reward/raw_min"] = rewards.min().item()
-            self.extras["log"]["Reward/raw_max"] = rewards.max().item()
-
-        return rewards_clipped
+        return rewards
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         """종료 조건"""
-        success = self.success_hold_count >= self.cfg.success_hold_steps
+        success = self.success_hold_count >= SUCCESS_HOLD_STEPS
 
         # 충돌 시 에피소드 즉시 종료 (학습 효율 향상)
         terminated = success | self.collision_detected
@@ -887,16 +838,12 @@ class E0509OSCEnvCfg_Soft(E0509OSCEnvCfg):
     Sim2Real 전이 시 실제 로봇의 임피던스 특성에 맞춤
     - stiffness: 150 → 60 (더 부드러운 반응)
     - action_scale: 0.05 → 0.03 (더 작은 이동량)
-    - success_hold_steps: 30 → 10 (빠른 성공 판정)
     """
 
     # OSC 설정 (부드러운 동작)
     osc_motion_stiffness = 60.0       # 150 → 60 (부드럽게)
     osc_motion_damping_ratio = 1.0    # 임계 감쇠 유지
     action_scale = 0.03               # 0.05 → 0.03 (더 작은 스텝)
-
-    # 성공 조건 (Sim2Real 친화적)
-    success_hold_steps = 10           # 30 → 10 (빠른 성공 판정)
 
 
 @configclass
