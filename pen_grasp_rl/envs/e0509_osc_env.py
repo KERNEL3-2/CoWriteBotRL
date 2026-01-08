@@ -194,8 +194,8 @@ class E0509OSCEnvCfg(DirectRLEnvCfg):
     rew_scale_perp_dist = -15.0        # 축에서 벗어나면 페널티 (강화: -8 → -15)
     rew_scale_perp_exp = 8.0           # 축 위에 있으면 보상 (강화: 5 → 8)
 
-    # 자세 정렬
-    rew_scale_alignment = 5.0
+    # 자세 정렬 (V3.1: 강화)
+    rew_scale_alignment = 20.0         # 강화: 5 → 20 (dot 정렬 중요)
 
     # 성공/기타
     rew_scale_ready_bonus = 10.0
