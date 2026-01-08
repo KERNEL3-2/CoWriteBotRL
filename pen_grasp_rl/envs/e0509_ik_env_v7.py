@@ -62,7 +62,7 @@ PHASE_APPROACH = 0    # RL: 펜 캡 위치로 접근 (자세는 자동)
 # V7 성공 조건 (GRASP 없이 위치+자세로만 판단)
 SUCCESS_DIST_TO_CAP = 0.03       # 캡까지 거리 < 3cm
 SUCCESS_PERP_DIST = 0.01         # 펜 축에서 벗어난 거리 < 1cm
-SUCCESS_HOLD_STEPS = 30          # 30 스텝 유지하면 성공
+SUCCESS_HOLD_STEPS = 5           # 5 스텝 유지하면 성공
 # V7.1: dot 조건 제거 (자세는 자동 정렬되므로 불필요)
 
 # Curriculum Learning 레벨별 펜 기울기 (라디안)
