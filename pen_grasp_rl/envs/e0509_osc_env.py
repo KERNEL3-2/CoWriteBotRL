@@ -181,10 +181,10 @@ class E0509OSCEnvCfg(DirectRLEnvCfg):
     ee_offset_pos = [0.0, 0.0, 0.15]
 
     # ==========================================================================
-    # 보상 스케일 (V3: axis_distance 기반 목표 거리)
+    # 보상 스케일 (V4: 거리 조정 + 진동 억제)
     # ==========================================================================
-    # 목표: 펜 축 위에서 캡으로부터 7cm 거리 유지
-    target_axis_distance = -0.07  # 캡 위 7cm (음수 = 캡 위)
+    # 목표: 펜 축 위에서 캡으로부터 5cm 거리 유지 (V3: 7cm → V4: 5cm)
+    target_axis_distance = -0.05  # 캡 위 5cm (음수 = 캡 위)
 
     # 축 방향 목표 거리 보상
     rew_scale_target_dist = 15.0       # 목표 거리(7cm)에 가까울수록 보상
@@ -201,6 +201,7 @@ class E0509OSCEnvCfg(DirectRLEnvCfg):
     rew_scale_ready_bonus = 10.0
     rew_scale_success = 100.0
     rew_scale_action = -0.01
+    rew_scale_action_smooth = -0.5     # V4: 진동 억제 (이전 action과의 차이 패널티)
     rew_scale_collision = -50.0
     rew_scale_too_close = -15.0        # 목표보다 가까이 가면 패널티 (강화: -10 → -15)
 
@@ -268,6 +269,7 @@ class E0509OSCEnv(DirectRLEnv):
         self.success_hold_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
         self.success_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
         self.collision_detected = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        self.prev_actions = torch.zeros(self.num_envs, 3, device=self.device)  # V4: 진동 억제용
 
         # 디버그 출력
         self._global_step = 0
@@ -633,6 +635,11 @@ class E0509OSCEnv(DirectRLEnv):
 
         rewards += self.cfg.rew_scale_action * torch.sum(torch.square(self.actions), dim=-1)
 
+        # V4: Action smoothness penalty (진동 억제)
+        action_diff = self.actions - self.prev_actions
+        rewards += self.cfg.rew_scale_action_smooth * torch.sum(torch.square(action_diff), dim=-1)
+        self.prev_actions = self.actions.clone()
+
         # 이전 거리 업데이트
         self.prev_distance_to_cap = distance_to_cap.clone()
 
@@ -659,8 +666,8 @@ class E0509OSCEnv(DirectRLEnv):
             too_close_cnt = too_close.sum().item()
             axis_dist_mean = axis_distance.mean().item() * 100
             axis_err_mean = axis_dist_error.mean().item() * 100
-            print(f"  [Step {self._global_step}] OSC V3 (목표: 캡 위 7cm)", flush=True)
-            print(f"    → axis_dist={axis_dist_mean:.2f}cm (목표: -7cm), "
+            print(f"  [Step {self._global_step}] OSC V4 (목표: 캡 위 5cm, 진동억제)", flush=True)
+            print(f"    → axis_dist={axis_dist_mean:.2f}cm (목표: -5cm), "
                   f"오차={axis_err_mean:.2f}cm, "
                   f"perp={perpendicular_dist.mean().item()*100:.2f}cm", flush=True)
             print(f"    → dot={dot.mean().item():.3f}, "
@@ -746,6 +753,7 @@ class E0509OSCEnv(DirectRLEnv):
         # 상태 리셋
         self.success_hold_count[env_ids] = 0
         self.collision_detected[env_ids] = False
+        self.prev_actions[env_ids] = 0  # V4: 진동 억제용
 
         self._osc_controller.reset()
 
