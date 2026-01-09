@@ -598,5 +598,88 @@ cd ~/IsaacLab
 python pen_grasp_rl/scripts/train_osc.py --num_envs 4096 --max_iterations 5000 --save_dir /home/fhekwn549/e0509_osc_6
 ```
 
+### 저장 경로
+`/home/fhekwn549/e0509_osc_6`
+
+### 결과
+
+| 지표 | 시작 | 최종 | 최대 |
+|------|------|------|------|
+| **Mean Reward** | -186.55 | 9,672.18 | 9,933.55 (step 4768) |
+| **Episode Length** | 21.74 | 440.67 | - |
+| **Success Hold Count** | 0.00 | 0.67 | 0.95 (step 3755) |
+| **Total Success** | 0 | 408,695 | - |
+
+### 거리 지표 (최종)
+| 지표 | 값 |
+|------|-----|
+| Axis Dist | -3.78cm (목표 -3cm) |
+| Dist to Cap | 4.04cm |
+| Perp Dist | 1.31cm |
+| Dot Mean | -0.07 |
+
+### 학습 그래프
+
+![OSC V5 3cm Training](images/e0509_osc_6_analysis.png)
+
+### V4 vs V5 비교
+
+| 지표 | V4 (5cm) | V5 (3cm) | 변화 |
+|------|----------|----------|------|
+| Mean Reward | 10,360 | 9,672 | ⬇️ -7% |
+| Success Hold Max | 1.38 | 0.95 | ⬇️ -31% |
+| Axis Dist | -5.63cm | -3.78cm | ✓ 더 가까움 |
+| Total Success | 272k | 409k | ⬆️ +50% |
+
+### 분석
+1. **목표 거리 달성**: Axis Dist -3.78cm로 목표 -3cm에 근접
+2. **Total Success 증가**: 272k → 409k로 50% 증가
+3. **문제점 발견**: 그리퍼 손가락이 펜에 부딪히는 경우 발생
+   - 기존 충돌 감지가 TCP만 확인하고 손가락은 무시했음
+
+---
+
+## OSC V6: 목표 거리 2cm + 손가락 충돌 감지 (2026-01-09)
+
+### 변경 내용
+
+| 항목 | V5 | V6 |
+|------|-----|-----|
+| target_axis_distance | -0.03 (3cm) | **-0.02 (2cm)** |
+| 충돌 감지 | TCP만 | **TCP + 양쪽 손가락 끝** |
+
+### 충돌 감지 개선
+
+**이전 (V5 이하)**:
+```
+        TCP ← 여기만 충돌 감지
+         │
+  ┌──────┼──────┐
+  │      │      │
+ 손가락   │   손가락 ← 감지 안됨!
+```
+
+**이후 (V6)**:
+```
+        TCP ← 충돌 감지
+         │
+  ┌──────┼──────┐
+  │      │      │
+  l2 ←───┼───→ r2 ← 모두 충돌 감지!
+```
+
+### 코드 변경
+`_check_pen_collision()` 함수에서 3개 포인트 모두 충돌 감지:
+- `grasp_pos`: TCP (그리퍼 중심)
+- `l2`: 왼쪽 손가락 끝 (body index 9)
+- `r2`: 오른쪽 손가락 끝 (body index 10)
+
+### 학습 명령어
+```bash
+source ~/isaacsim_env/bin/activate
+cd ~/IsaacLab
+python pen_grasp_rl/scripts/train_osc.py --num_envs 4096 --max_iterations 5000 --save_dir /home/fhekwn549/e0509_osc_7
+```
+
 ### 결과
 (학습 후 기록 예정)

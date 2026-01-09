@@ -183,8 +183,8 @@ class E0509OSCEnvCfg(DirectRLEnvCfg):
     # ==========================================================================
     # 보상 스케일 (V4: 거리 조정 + 진동 억제)
     # ==========================================================================
-    # 목표: 펜 축 위에서 캡으로부터 3cm 거리 유지 (V4: 5cm → V5: 3cm)
-    target_axis_distance = -0.03  # 캡 위 3cm (음수 = 캡 위)
+    # 목표: 펜 축 위에서 캡으로부터 2cm 거리 유지 (V5: 3cm → V6: 2cm)
+    target_axis_distance = -0.02  # 캡 위 2cm (음수 = 캡 위)
 
     # 축 방향 목표 거리 보상
     rew_scale_target_dist = 15.0       # 목표 거리(7cm)에 가까울수록 보상
@@ -485,31 +485,48 @@ class E0509OSCEnv(DirectRLEnv):
         return perpendicular_dist, axis_distance, on_correct_side
 
     def _check_pen_collision(self) -> torch.Tensor:
-        """펜 몸체와의 충돌 감지 (캡 영역 제외)
+        """펜 몸체와의 충돌 감지 (캡 영역 제외, 그리퍼 손가락 포함)
 
         펜 구조 (pen_axis 방향이 캡):
-            캡 (cap) ← proj > 0
+            캡 (cap) ← proj < 0 (정상 접근)
               ↑
         ======●====== pen_pos (중심)
               ↓
-            몸체 ← proj < 0 (여기만 충돌 감지!)
+            몸체 ← proj > 0 (여기만 충돌 감지!)
+
+        충돌 감지 포인트:
+        - TCP (grasp_pos): 그리퍼 중심
+        - l2: 왼쪽 손가락 끝
+        - r2: 오른쪽 손가락 끝
         """
-        grasp_pos = self._get_grasp_point()
         pen_pos = self.pen.data.root_pos_w
         pen_axis = self._get_pen_z_axis()
 
-        grasp_to_pen = pen_pos - grasp_pos
-        proj_length = torch.sum(grasp_to_pen * pen_axis, dim=-1)
+        # 충돌 감지할 포인트들
+        grasp_pos = self._get_grasp_point()
+        l2 = self.robot.data.body_pos_w[:, 9, :]   # 왼쪽 손가락 끝
+        r2 = self.robot.data.body_pos_w[:, 10, :]  # 오른쪽 손가락 끝
 
-        proj_vec = proj_length.unsqueeze(-1) * pen_axis
-        perp_to_pen = grasp_to_pen - proj_vec
-        perp_dist = torch.norm(perp_to_pen, dim=-1)
+        def check_point_collision(point_pos):
+            """단일 포인트의 펜 충돌 여부 확인"""
+            point_to_pen = pen_pos - point_pos
+            proj_length = torch.sum(point_to_pen * pen_axis, dim=-1)
 
-        # 펜 몸체만 충돌 감지 (캡 영역 제외)
-        # proj_length < 0: 그리퍼가 캡 위에 있음 (정상 접근, 충돌 감지 X)
-        # proj_length > 0: 그리퍼가 몸체 쪽에 있음 (충돌 감지 O)
-        in_pen_body = (proj_length > 0) & (proj_length < PEN_LENGTH / 2)
-        collision = in_pen_body & (perp_dist < 0.015)  # 1.5cm
+            proj_vec = proj_length.unsqueeze(-1) * pen_axis
+            perp_to_pen = point_to_pen - proj_vec
+            perp_dist = torch.norm(perp_to_pen, dim=-1)
+
+            # 펜 몸체만 충돌 감지 (캡 영역 제외)
+            in_pen_body = (proj_length > 0) & (proj_length < PEN_LENGTH / 2)
+            return in_pen_body & (perp_dist < 0.015)  # 1.5cm
+
+        # TCP + 양쪽 손가락 끝 모두 충돌 감지
+        collision_tcp = check_point_collision(grasp_pos)
+        collision_l2 = check_point_collision(l2)
+        collision_r2 = check_point_collision(r2)
+
+        # 셋 중 하나라도 충돌하면 collision
+        collision = collision_tcp | collision_l2 | collision_r2
 
         return collision
 
@@ -666,8 +683,8 @@ class E0509OSCEnv(DirectRLEnv):
             too_close_cnt = too_close.sum().item()
             axis_dist_mean = axis_distance.mean().item() * 100
             axis_err_mean = axis_dist_error.mean().item() * 100
-            print(f"  [Step {self._global_step}] OSC V5 (목표: 캡 위 3cm, 진동억제)", flush=True)
-            print(f"    → axis_dist={axis_dist_mean:.2f}cm (목표: -3cm), "
+            print(f"  [Step {self._global_step}] OSC V6 (목표: 캡 위 2cm, 손가락 충돌감지)", flush=True)
+            print(f"    → axis_dist={axis_dist_mean:.2f}cm (목표: -2cm), "
                   f"오차={axis_err_mean:.2f}cm, "
                   f"perp={perpendicular_dist.mean().item()*100:.2f}cm", flush=True)
             print(f"    → dot={dot.mean().item():.3f}, "
