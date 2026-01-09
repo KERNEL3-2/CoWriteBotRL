@@ -521,3 +521,82 @@ python pen_grasp_rl/scripts/train_osc.py --headless --num_envs 4096
 1. 성공 조건 완화로 학습 초반 성공 경험 증가
 2. 7cm 이하 접근 패널티로 Sim2Real 시 충돌 방지
 3. 짧은 hold_steps(10)으로 빠른 성공 판정
+
+---
+
+## OSC V4: 목표 거리 5cm 학습 (2026-01-09)
+
+### 저장 경로
+`/home/fhekwn549/e0509_osc_5`
+
+### 설정
+| 파라미터 | 값 |
+|----------|-----|
+| target_axis_distance | -0.05 (캡 위 5cm) |
+| num_envs | 4096 |
+| max_iterations | 5000 |
+| stiffness | 150 |
+| action_scale | 0.05 |
+
+### 결과
+
+| 지표 | 시작 | 최종 | 최대 |
+|------|------|------|------|
+| **Mean Reward** | -183.42 | 10,360.29 | 10,602.41 (step 4474) |
+| **Episode Length** | 21.79 | 442.87 | - |
+| **Success Hold Count** | 0.00 | 0.64 | 1.38 (step 4157) |
+| **Total Success** | 0 | 272,085 | - |
+
+### 거리 지표 (최종)
+| 지표 | 값 |
+|------|-----|
+| Dist to Cap | 5.86cm |
+| Perp Dist | 1.44cm |
+| Axis Dist | -5.63cm |
+| Dot Mean | -0.16 |
+
+### 충돌 지표
+| 지표 | 값 |
+|------|-----|
+| Collision Count | 0 |
+| Too Close Count | 4,684 |
+
+### 학습 그래프
+
+![OSC V4 5cm Training](images/e0509_osc_5_analysis.png)
+
+### 분석
+1. **리워드 대폭 상승**: -183 → 10,360 (역대 최고 성능)
+2. **에피소드 길이 증가**: 21 → 443으로 거의 최대치(450)에 근접
+3. **성공률 존재**: Success Hold Count 최대 1.38 달성
+4. **목표 거리 근접**: Dist to Cap 5.86cm로 목표 5cm에 근접
+5. **충돌 없음**: Collision Count 0으로 안전한 동작
+
+### 추천 체크포인트
+- `model_4400.pt` (최대 리워드 구간)
+- `model_4100.pt` (최대 Success Hold Count 구간)
+
+---
+
+## OSC V5: 목표 거리 3cm로 변경 (2026-01-09)
+
+### 변경 내용
+
+| 항목 | V4 | V5 |
+|------|-----|-----|
+| target_axis_distance | -0.05 (5cm) | **-0.03 (3cm)** |
+| 로그 메시지 | OSC V4, 목표 5cm | OSC V5, 목표 3cm |
+
+### 변경 이유
+- V4에서 5cm 목표 달성 확인
+- 더 가까운 거리(3cm)에서의 그리핑 성능 테스트
+
+### 학습 명령어
+```bash
+source ~/isaacsim_env/bin/activate
+cd ~/IsaacLab
+python pen_grasp_rl/scripts/train_osc.py --num_envs 4096 --max_iterations 5000 --save_dir /home/fhekwn549/e0509_osc_6
+```
+
+### 결과
+(학습 후 기록 예정)

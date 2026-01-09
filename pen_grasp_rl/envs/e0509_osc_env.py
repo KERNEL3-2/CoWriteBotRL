@@ -183,8 +183,8 @@ class E0509OSCEnvCfg(DirectRLEnvCfg):
     # ==========================================================================
     # 보상 스케일 (V4: 거리 조정 + 진동 억제)
     # ==========================================================================
-    # 목표: 펜 축 위에서 캡으로부터 5cm 거리 유지 (V3: 7cm → V4: 5cm)
-    target_axis_distance = -0.05  # 캡 위 5cm (음수 = 캡 위)
+    # 목표: 펜 축 위에서 캡으로부터 3cm 거리 유지 (V4: 5cm → V5: 3cm)
+    target_axis_distance = -0.03  # 캡 위 3cm (음수 = 캡 위)
 
     # 축 방향 목표 거리 보상
     rew_scale_target_dist = 15.0       # 목표 거리(7cm)에 가까울수록 보상
@@ -666,8 +666,8 @@ class E0509OSCEnv(DirectRLEnv):
             too_close_cnt = too_close.sum().item()
             axis_dist_mean = axis_distance.mean().item() * 100
             axis_err_mean = axis_dist_error.mean().item() * 100
-            print(f"  [Step {self._global_step}] OSC V4 (목표: 캡 위 5cm, 진동억제)", flush=True)
-            print(f"    → axis_dist={axis_dist_mean:.2f}cm (목표: -5cm), "
+            print(f"  [Step {self._global_step}] OSC V5 (목표: 캡 위 3cm, 진동억제)", flush=True)
+            print(f"    → axis_dist={axis_dist_mean:.2f}cm (목표: -3cm), "
                   f"오차={axis_err_mean:.2f}cm, "
                   f"perp={perpendicular_dist.mean().item()*100:.2f}cm", flush=True)
             print(f"    → dot={dot.mean().item():.3f}, "
